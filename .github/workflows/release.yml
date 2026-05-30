@@ -1,0 +1,58 @@
+name: Release Foundry module
+
+# Build le module Foundry et publie une release versionnee a URL stable.
+# Foundry installe / met a jour via :
+#   https://github.com/lululufr/foundry-mcp-bridge/releases/latest/download/module.json
+# Pour declencher une mise a jour cote Foundry : bump "version" dans
+# packages/foundry-module/module.json puis push sur main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/foundry-module/**'
+      - 'shared/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps (skip native scripts)
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Build shared + foundry module
+        run: |
+          npm run build:shared
+          npm run build:foundry
+
+      - name: Read module version
+        id: meta
+        run: echo "version=$(node -p "require('./packages/foundry-module/module.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Package module (dist + manifest + assets)
+        run: |
+          cd packages/foundry-module
+          zip -r ../../foundry-mcp-bridge.zip dist module.json styles lang
+          cd ../..
+          ls -lh foundry-mcp-bridge.zip
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}
+          name: foundry-mcp-bridge v${{ steps.meta.outputs.version }}
+          make_latest: true
+          files: |
+            foundry-mcp-bridge.zip
+            packages/foundry-module/module.json
