@@ -77,6 +77,11 @@ export class SceneTools {
               description: 'Grid square size in pixels (only used when gridEnabled). Default: 100.',
               default: 100,
             },
+            wallsPath: {
+              type: 'string',
+              description:
+                'Optional absolute path to a JSON file containing an array of wall segments to create on the scene (e.g. the .walls.json produced by the Watabou "maison"/Dwellings generator). Each entry: { c:[x1,y1,x2,y2], movement, sight, door, doorState, direction }. Coordinates are in image pixels.',
+            },
           },
           required: ['imagePath', 'sceneName'],
         },
@@ -138,10 +143,28 @@ export class SceneTools {
       sceneName: z.string(),
       gridEnabled: z.boolean().default(false),
       gridSize: z.number().default(100),
+      wallsPath: z.string().optional(),
     });
-    const { imagePath, sceneName, gridEnabled, gridSize } = schema.parse(args);
+    const { imagePath, sceneName, gridEnabled, gridSize, wallsPath } = schema.parse(args);
 
     this.logger.info('Importing map image as scene', { imagePath, sceneName, gridEnabled });
+
+    // Optional walls (e.g. Watabou "maison"/Dwellings .walls.json) — the Foundry module
+    // turns sceneData.walls into Wall documents at scene creation (createSceneWalls).
+    let walls: any[] = [];
+    if (wallsPath) {
+      try {
+        const raw = await readFile(wallsPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) walls = parsed;
+        else throw new Error('walls JSON must be an array');
+        this.logger.info('Loaded walls for scene', { wallsPath, count: walls.length });
+      } catch (error) {
+        throw new Error(
+          `Cannot read walls file "${wallsPath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+    }
 
     let imageBuffer: Buffer;
     try {
@@ -192,7 +215,7 @@ export class SceneTools {
       darkness: 0,
       navigation: true,
       active: false,
-      walls: [],
+      walls,
     };
 
     this.foundryClient.broadcastMessage({
@@ -208,10 +231,11 @@ export class SceneTools {
 
     return {
       success: true,
-      message: `Scene "${sceneName}" requested in Foundry from ${filename} (${width}x${height}px). It is created and activated by the Foundry module.`,
+      message: `Scene "${sceneName}" requested in Foundry from ${filename} (${width}x${height}px)${walls.length ? ` with ${walls.length} walls` : ''}. It is created and activated by the Foundry module.`,
       uploadedPath: webPath,
       dimensions: { width, height },
       gridEnabled,
+      wallsCreated: walls.length,
     };
   }
 

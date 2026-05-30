@@ -318,6 +318,13 @@ export class SocketBridge {
         console.log(`[jdr-mcp-bridge] Added folder ID to scene data`);
       }
 
+      // Walls are created separately via createSceneWalls (which maps our logical
+      // fields movement/sight/door/doorState/direction → Foundry move/sense/door/ds/dir).
+      // We must NOT also pass them to Scene.create, otherwise Foundry embeds a second,
+      // raw copy (with our non-native keys → non-blocking ghost walls) → walls doubled.
+      const wallsData = Array.isArray(sceneData.walls) ? sceneData.walls : [];
+      delete sceneData.walls;
+
       // Create the scene using the complete payload from backend
       console.log(`[jdr-mcp-bridge] Attempting to create scene...`);
       const scene = await (globalThis as any).Scene.create(sceneData);
@@ -331,8 +338,8 @@ export class SocketBridge {
         });
       }
 
-      if (sceneData.walls && sceneData.walls.length > 0) {
-        await this.createSceneWalls(scene, sceneData.walls);
+      if (wallsData.length > 0) {
+        await this.createSceneWalls(scene, wallsData);
       }
 
       ui.notifications?.info(`Scene "${sceneData.name}" created successfully!`);
