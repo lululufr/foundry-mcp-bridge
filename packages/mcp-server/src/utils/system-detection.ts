@@ -32,7 +32,7 @@ export async function detectGameSystem(
   }
 
   try {
-    const worldInfo = await foundryClient.query('foundry-mcp-bridge.getWorldInfo');
+    const worldInfo = await foundryClient.query('jdr-mcp-bridge.getWorldInfo');
     const systemId = (worldInfo.system ?? '').toLowerCase();
 
     cachedSystemId = systemId;

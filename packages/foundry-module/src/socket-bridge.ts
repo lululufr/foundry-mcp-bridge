@@ -212,7 +212,7 @@ export class SocketBridge {
         this.handleProgressUpdate(message.data);
       }
     } catch (error) {
-      console.error(`[foundry-mcp-bridge] ERROR in handleMessage:`, error);
+      console.error(`[jdr-mcp-bridge] ERROR in handleMessage:`, error);
       this.log(`Error handling message: ${error}`);
     }
   }
@@ -253,7 +253,7 @@ export class SocketBridge {
 
       this.log(`Progress: ${message}`);
     } catch (error) {
-      console.error(`[foundry-mcp-bridge] Error handling progress update:`, error);
+      console.error(`[jdr-mcp-bridge] Error handling progress update:`, error);
     }
   }
 
@@ -262,7 +262,7 @@ export class SocketBridge {
       this.log(`Handling MCP query: ${data.method}`);
 
       // Check if the query handler exists in CONFIG.queries
-      const queryKey = data.method; // Method already includes full path like 'foundry-mcp-bridge.listActors'
+      const queryKey = data.method; // Method already includes full path like 'jdr-mcp-bridge.listActors'
       const handler = CONFIG.queries[queryKey];
 
       if (!handler || typeof handler !== 'function') {
@@ -287,41 +287,41 @@ export class SocketBridge {
 
   private async handleJobCompleted(data: any): Promise<void> {
     try {
-      console.log(`[foundry-mcp-bridge] Map generation completed, creating scene...`);
-      console.log(`[foundry-mcp-bridge] Job completion data:`, data);
+      console.log(`[jdr-mcp-bridge] Map generation completed, creating scene...`);
+      console.log(`[jdr-mcp-bridge] Job completion data:`, data);
 
       // Handle mapgen-style data structure
       if (!data.result) {
-        console.error(`[foundry-mcp-bridge] ERROR: No scene result data provided`);
+        console.error(`[jdr-mcp-bridge] ERROR: No scene result data provided`);
         throw new Error('No scene result data provided');
       }
 
       if (!data.image_path) {
-        console.error(`[foundry-mcp-bridge] ERROR: No image path provided for scene creation`);
+        console.error(`[jdr-mcp-bridge] ERROR: No image path provided for scene creation`);
         throw new Error('No image path provided for scene creation');
       }
 
       // Use the complete scene data from backend (like mapgen does)
       const sceneData = data.result;
 
-      console.log(`[foundry-mcp-bridge] Scene data to create:`, sceneData);
-      console.log(`[foundry-mcp-bridge] Scene name: "${sceneData.name}"`);
+      console.log(`[jdr-mcp-bridge] Scene data to create:`, sceneData);
+      console.log(`[jdr-mcp-bridge] Scene name: "${sceneData.name}"`);
 
       // Ensure "AI Generated Maps" folder exists and get its ID
-      console.log(`[foundry-mcp-bridge] Ensuring AI Generated Maps folder exists...`);
+      console.log(`[jdr-mcp-bridge] Ensuring AI Generated Maps folder exists...`);
       const folderId = await this.ensureAIMapsFolderExists();
-      console.log(`[foundry-mcp-bridge] Folder ID:`, folderId);
+      console.log(`[jdr-mcp-bridge] Folder ID:`, folderId);
 
       // Add folder to scene data
       if (folderId) {
         sceneData.folder = folderId;
-        console.log(`[foundry-mcp-bridge] Added folder ID to scene data`);
+        console.log(`[jdr-mcp-bridge] Added folder ID to scene data`);
       }
 
       // Create the scene using the complete payload from backend
-      console.log(`[foundry-mcp-bridge] Attempting to create scene...`);
+      console.log(`[jdr-mcp-bridge] Attempting to create scene...`);
       const scene = await (globalThis as any).Scene.create(sceneData);
-      console.log(`[foundry-mcp-bridge] Scene created successfully:`, scene);
+      console.log(`[jdr-mcp-bridge] Scene created successfully:`, scene);
 
       // CRITICAL: Foundry v13 bug workaround (like working mapgen system)
       if (!scene.img && sceneData.img) {

@@ -75,7 +75,7 @@ export class FoundryClient {
   }
 
   ping(): Promise<any> {
-    return this.query('foundry-mcp-bridge.ping');
+    return this.query('jdr-mcp-bridge.ping');
   }
 
   getConnectionInfo(): any {

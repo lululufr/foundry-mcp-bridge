@@ -98,7 +98,7 @@ export class DiceRollTools {
       }
 
       const response = await this.foundryClient.query(
-        'foundry-mcp-bridge.request-player-rolls',
+        'jdr-mcp-bridge.request-player-rolls',
         params
       );
 

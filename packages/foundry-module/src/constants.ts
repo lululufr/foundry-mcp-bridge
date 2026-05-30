@@ -3,7 +3,7 @@
 /**
  * Module constants
  */
-export const MODULE_ID = 'foundry-mcp-bridge';
+export const MODULE_ID = 'jdr-mcp-bridge';
 export const MODULE_TITLE = 'Foundry MCP Bridge';
 
 /**

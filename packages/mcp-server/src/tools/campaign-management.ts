@@ -138,7 +138,7 @@ export class CampaignManagementTools {
 
       // Create the journal entry in Foundry (organized in campaign-specific folder)
       const journalResult = await this.foundryClient.query(
-        'foundry-mcp-bridge.createJournalEntry',
+        'jdr-mcp-bridge.createJournalEntry',
         {
           name: `${request.campaignTitle} - Campaign Dashboard`,
           content: dashboardContent,

@@ -43,16 +43,16 @@ jobs:
       - name: Package module (dist + manifest + assets)
         run: |
           cd packages/foundry-module
-          zip -r ../../foundry-mcp-bridge.zip dist module.json styles lang
+          zip -r ../../jdr-mcp-bridge.zip dist module.json styles lang
           cd ../..
-          ls -lh foundry-mcp-bridge.zip
+          ls -lh jdr-mcp-bridge.zip
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.meta.outputs.version }}
-          name: foundry-mcp-bridge v${{ steps.meta.outputs.version }}
+          name: jdr-mcp-bridge v${{ steps.meta.outputs.version }}
           make_latest: true
           files: |
-            foundry-mcp-bridge.zip
+            jdr-mcp-bridge.zip
             packages/foundry-module/module.json

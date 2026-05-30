@@ -274,7 +274,7 @@ export class CharacterTools {
     this.logger.info('Getting character information', { identifier });
 
     try {
-      const characterData = await this.foundryClient.query('foundry-mcp-bridge.getCharacterInfo', {
+      const characterData = await this.foundryClient.query('jdr-mcp-bridge.getCharacterInfo', {
         characterName: identifier,
       });
 
@@ -305,7 +305,7 @@ export class CharacterTools {
 
     try {
       // First get the character
-      const characterData = await this.foundryClient.query('foundry-mcp-bridge.getCharacterInfo', {
+      const characterData = await this.foundryClient.query('jdr-mcp-bridge.getCharacterInfo', {
         characterName: characterIdentifier,
       });
 
@@ -416,7 +416,7 @@ export class CharacterTools {
     this.logger.info('Listing characters', { type });
 
     try {
-      const actors = await this.foundryClient.query('foundry-mcp-bridge.listActors', { type });
+      const actors = await this.foundryClient.query('jdr-mcp-bridge.listActors', { type });
 
       this.logger.debug('Successfully retrieved character list', { count: actors.length });
 
@@ -462,7 +462,7 @@ export class CharacterTools {
     });
 
     try {
-      const result = await this.foundryClient.query('foundry-mcp-bridge.useItem', {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.useItem', {
         actorIdentifier,
         itemIdentifier,
         targets,
@@ -510,7 +510,7 @@ export class CharacterTools {
     });
 
     try {
-      const result = await this.foundryClient.query('foundry-mcp-bridge.addActorItems', {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.addActorItems', {
         actorIdentifier,
         items,
       });
@@ -550,7 +550,7 @@ export class CharacterTools {
     });
 
     try {
-      const result = await this.foundryClient.query('foundry-mcp-bridge.updateWorldItems', { updates });
+      const result = await this.foundryClient.query('jdr-mcp-bridge.updateWorldItems', { updates });
 
       this.logger.debug('Successfully updated world items', { count: result.updated?.length ?? 0 });
 
@@ -574,7 +574,7 @@ export class CharacterTools {
     this.logger.info('Listing world items', { type: type ?? null, folder: folder ?? null, nameFilter: nameFilter ?? null });
 
     try {
-      const items = await this.foundryClient.query('foundry-mcp-bridge.listWorldItems', {
+      const items = await this.foundryClient.query('jdr-mcp-bridge.listWorldItems', {
         ...(type !== undefined ? { type } : {}),
         ...(folder !== undefined ? { folder } : {}),
         ...(nameFilter !== undefined ? { nameFilter } : {}),
@@ -615,7 +615,7 @@ export class CharacterTools {
     });
 
     try {
-      const result = await this.foundryClient.query('foundry-mcp-bridge.createWorldItems', {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.createWorldItems', {
         items,
         folder,
       });
@@ -668,7 +668,7 @@ export class CharacterTools {
     });
 
     try {
-      const result = await this.foundryClient.query('foundry-mcp-bridge.searchCharacterItems', {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.searchCharacterItems', {
         characterIdentifier,
         query,
         type,

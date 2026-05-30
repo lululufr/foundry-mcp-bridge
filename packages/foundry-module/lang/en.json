@@ -1,5 +1,5 @@
 {
-  "foundry-mcp-bridge": {
+  "jdr-mcp-bridge": {
     "settings": {
       "enabled": {
         "name": "Enable MCP Bridge",

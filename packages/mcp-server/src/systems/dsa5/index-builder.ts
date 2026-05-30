@@ -29,7 +29,7 @@ interface DSA5ExtractionResult {
 export class DSA5IndexBuilder implements IndexBuilder {
   private moduleId: string;
 
-  constructor(moduleId: string = 'foundry-mcp-bridge') {
+  constructor(moduleId: string = 'jdr-mcp-bridge') {
     this.moduleId = moduleId;
   }
 

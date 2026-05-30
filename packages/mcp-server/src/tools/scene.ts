@@ -95,7 +95,7 @@ export class SceneTools {
     this.logger.info('Getting current scene information', { includeTokens, includeHidden });
 
     try {
-      const sceneData = await this.foundryClient.query('foundry-mcp-bridge.getActiveScene');
+      const sceneData = await this.foundryClient.query('jdr-mcp-bridge.getActiveScene');
 
       this.logger.debug('Successfully retrieved scene data', {
         sceneId: sceneData.id,
@@ -116,7 +116,7 @@ export class SceneTools {
     this.logger.info('Getting world information');
 
     try {
-      const worldData = await this.foundryClient.query('foundry-mcp-bridge.getWorldInfo');
+      const worldData = await this.foundryClient.query('jdr-mcp-bridge.getWorldInfo');
 
       this.logger.debug('Successfully retrieved world data', {
         worldId: worldData.id,
@@ -155,7 +155,7 @@ export class SceneTools {
     const { width, height } = this.readImageDimensions(imageBuffer);
 
     const filename = basename(imagePath);
-    const uploadResult = await this.foundryClient.query('foundry-mcp-bridge.upload-generated-map', {
+    const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
       filename,
       imageData: base64Image,
     });

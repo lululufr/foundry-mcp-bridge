@@ -177,7 +177,7 @@ export class MacInstaller {
       };
     }
 
-    const moduleDestPath = path.join(foundryModulesPath, 'foundry-mcp-bridge');
+    const moduleDestPath = path.join(foundryModulesPath, 'jdr-mcp-bridge');
 
     // Check if module already exists
     if (fs.existsSync(path.join(moduleDestPath, 'module.json'))) {

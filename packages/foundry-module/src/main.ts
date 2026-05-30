@@ -516,7 +516,7 @@ Hooks.once('ready', async () => {
 
     // Register socket listener for roll state management (after game.user is available)
 
-    game.socket?.on('module.foundry-mcp-bridge', async data => {
+    game.socket?.on('module.jdr-mcp-bridge', async data => {
       try {
         // Handle ChatMessage update requests (GM only)
         if (data.type === 'requestMessageUpdate' && data.buttonId && data.messageId) {

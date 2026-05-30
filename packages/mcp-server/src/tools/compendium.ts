@@ -400,7 +400,7 @@ export class CompendiumTools {
     });
 
     try {
-      const results = await this.foundryClient.query('foundry-mcp-bridge.searchCompendium', {
+      const results = await this.foundryClient.query('jdr-mcp-bridge.searchCompendium', {
         query,
         packType,
         filters,
@@ -444,7 +444,7 @@ export class CompendiumTools {
 
     try {
       // Use the proper document retrieval method that already exists in actor creation
-      const item = await this.foundryClient.query('foundry-mcp-bridge.getCompendiumDocumentFull', {
+      const item = await this.foundryClient.query('jdr-mcp-bridge.getCompendiumDocumentFull', {
         packId: packId,
         documentId: itemId,
       });
@@ -748,7 +748,7 @@ export class CompendiumTools {
 
     try {
       const results = await this.foundryClient.query(
-        'foundry-mcp-bridge.listCreaturesByCriteria',
+        'jdr-mcp-bridge.listCreaturesByCriteria',
         params
       );
 
@@ -801,7 +801,7 @@ export class CompendiumTools {
     this.logger.info('Listing compendium packs', { type });
 
     try {
-      const packs = await this.foundryClient.query('foundry-mcp-bridge.getAvailablePacks');
+      const packs = await this.foundryClient.query('jdr-mcp-bridge.getAvailablePacks');
 
       // Filter by type if specified
       const filteredPacks = type ? packs.filter((pack: any) => pack.type === type) : packs;
