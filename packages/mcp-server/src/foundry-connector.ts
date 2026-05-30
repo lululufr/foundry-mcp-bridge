@@ -376,9 +376,12 @@ export class FoundryConnector {
     });
 
     return new Promise((resolve, reject) => {
-      // Les uploads d'image (base64) sont lents sur WebRTC : timeout étendu pour ces méthodes.
+      // Les uploads d'image (base64) sont lents sur WebRTC (~50-70 Ko/s sur lien Tailscale) :
+      // timeout large pour ces méthodes. Un timeout trop court qui se déclenche pendant que des
+      // chunks sont encore en vol laisse le canal data dans un état incohérent (queries suivantes
+      // bloquées jusqu'au F5) — mieux vaut laisser l'upload finir. 300 s couvre ~15-20 Mo.
       const isUpload = /upload-generated-map|upload-map-chunk|finalize-map-upload/.test(method);
-      const timeoutMs = isUpload ? 120000 : 10000;
+      const timeoutMs = isUpload ? 300000 : 10000;
       const timeout = setTimeout(() => {
         this.pendingQueries.delete(queryId);
         reject(new Error(`Query timeout: ${method}`));

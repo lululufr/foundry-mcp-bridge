@@ -87,6 +87,11 @@ export class WebRTCConnection {
     this.dataChannel.onmessage = async event => {
       try {
         const message = JSON.parse(event.data);
+        // Réassemblage des gros messages chunkés par le serveur (ex. upload d'image base64).
+        if (message.type === 'chunked-message') {
+          await this.handleChunkedMessage(message);
+          return;
+        }
         if (this.messageHandler) {
           await this.messageHandler(message);
         }
@@ -190,6 +195,58 @@ export class WebRTCConnection {
 
     this.connectionState = CONNECTION_STATES.DISCONNECTED;
     this.log('WebRTC connection closed');
+  }
+
+  // Réassemblage des messages chunkés reçus du serveur (mêmes champs que webrtc-peer.ts côté MCP).
+  private pendingChunks: Map<
+    string,
+    { chunks: Map<number, string>; totalChunks: number; timestamp: number }
+  > = new Map();
+
+  private async handleChunkedMessage(chunkMessage: any): Promise<void> {
+    const { chunkId, chunkIndex, totalChunks, chunk } = chunkMessage;
+    if (
+      !chunkId ||
+      typeof chunkIndex !== 'number' ||
+      typeof totalChunks !== 'number' ||
+      typeof chunk !== 'string'
+    ) {
+      this.log('Invalid chunk message - ignoring');
+      return;
+    }
+    // Nettoyage des reassemblages périmés (>60 s) pour éviter une fuite mémoire sur upload avorté.
+    const now = Date.now();
+    for (const [id, p] of this.pendingChunks) {
+      if (now - p.timestamp > 60000) this.pendingChunks.delete(id);
+    }
+    if (!this.pendingChunks.has(chunkId)) {
+      this.pendingChunks.set(chunkId, { chunks: new Map(), totalChunks, timestamp: now });
+    }
+    const pending = this.pendingChunks.get(chunkId)!;
+    if (pending.totalChunks !== totalChunks) {
+      this.pendingChunks.delete(chunkId);
+      return;
+    }
+    pending.chunks.set(chunkIndex, chunk);
+    if (pending.chunks.size !== totalChunks) return;
+
+    let reassembled = '';
+    for (let i = 0; i < totalChunks; i++) {
+      const c = pending.chunks.get(i);
+      if (c === undefined) {
+        this.pendingChunks.delete(chunkId);
+        this.log(`Missing chunk ${i}/${totalChunks} during reassembly`);
+        return;
+      }
+      reassembled += c;
+    }
+    this.pendingChunks.delete(chunkId);
+    try {
+      const complete = JSON.parse(reassembled);
+      if (this.messageHandler) await this.messageHandler(complete);
+    } catch (error) {
+      this.log(`Failed to parse reassembled message: ${error}`);
+    }
   }
 
   sendMessage(message: any): void {

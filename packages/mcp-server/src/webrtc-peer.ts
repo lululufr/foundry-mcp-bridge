@@ -184,8 +184,45 @@ export class WebRTCPeer {
     }
 
     try {
-      this.dataChannel.send(JSON.stringify(message));
-      this.logger.debug('Sent WebRTC message', { type: message.type });
+      const json = JSON.stringify(message);
+      // SCTP a une taille de message max (~64 Ko) : un seul `send()` d'une grosse image base64
+      // (~5 Mo) casse le canal data (queries suivantes bloquées). On découpe donc en chunks de
+      // 50 Ko, comme le fait déjà le module dans l'autre sens. Le module réassemble via
+      // `chunked-message` (handleChunkedMessage). Mêmes champs des deux côtés.
+      const MAX_MESSAGE_SIZE = 65536; // 64 Ko - limite dure SCTP
+      const CHUNK_SIZE = 50 * 1024; // 50 Ko - seuil de chunking
+      if (json.length > CHUNK_SIZE) {
+        const totalChunks = Math.ceil(json.length / CHUNK_SIZE);
+        const chunkId = `chunk-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        this.logger.debug('Chunking large outbound message', {
+          size: json.length,
+          totalChunks,
+          type: message.type,
+        });
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, json.length);
+          const chunkJson = JSON.stringify({
+            type: 'chunked-message',
+            chunkId,
+            chunkIndex: i,
+            totalChunks,
+            chunk: json.substring(start, end),
+            originalType: message.type,
+            originalId: message.id,
+          });
+          if (chunkJson.length > MAX_MESSAGE_SIZE) {
+            throw new Error(
+              `Chunk ${i + 1}/${totalChunks} size ${chunkJson.length} exceeds SCTP max ${MAX_MESSAGE_SIZE}`
+            );
+          }
+          this.dataChannel.send(chunkJson);
+        }
+        this.logger.debug('Sent all outbound chunks', { totalChunks, type: message.type });
+      } else {
+        this.dataChannel.send(json);
+        this.logger.debug('Sent WebRTC message', { type: message.type });
+      }
     } catch (error) {
       this.logger.error('Failed to send WebRTC message', error);
     }
