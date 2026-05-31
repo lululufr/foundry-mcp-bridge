@@ -48,6 +48,8 @@ export class QueryHandlers {
       this.handleCreateSceneNotes.bind(this);
     CONFIG.queries[`${modulePrefix}.delete-scene-notes`] =
       this.handleDeleteSceneNotes.bind(this);
+    CONFIG.queries[`${modulePrefix}.create-scene-tiles`] =
+      this.handleCreateSceneTiles.bind(this);
     CONFIG.queries[`${modulePrefix}.sync-codex`] = this.handleSyncCodex.bind(this);
 
     // World queries
@@ -1057,6 +1059,33 @@ export class QueryHandlers {
   }
 
   /**
+   * Handle creation of decorative/loot Tiles on a scene (skill objets-de-scene).
+   * Each tile carries an image (already uploaded via upload-generated-map) plus an
+   * optional linked dnd5e item recorded as a module flag for the GM to grant on pickup.
+   */
+  private async handleCreateSceneTiles(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data || !Array.isArray(data.tiles) || data.tiles.length === 0) {
+        throw new Error('tiles array is required and must not be empty');
+      }
+
+      return await this.dataAccess.createSceneTiles(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to create scene tiles: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Handle delete scene notes request (remove map pins by id, or all).
    */
   private async handleDeleteSceneNotes(data: any): Promise<any> {
@@ -1314,7 +1343,13 @@ export class QueryHandlers {
       // Upload to world-specific folder so maps persist even if module is deleted
       // This also keeps maps organized per world
       const worldId = (game as any).world?.id || 'unknown-world';
-      const uploadPath = `worlds/${worldId}/ai-generated-maps`;
+      // Optional subdir (e.g. "scene-props") so callers can keep uploads organized;
+      // sanitized to a single path segment. Defaults to the maps folder.
+      const subdir =
+        typeof data.subdir === 'string' && data.subdir.trim()
+          ? data.subdir.replace(/[^a-zA-Z0-9_\-]/g, '') || 'ai-generated-maps'
+          : 'ai-generated-maps';
+      const uploadPath = `worlds/${worldId}/${subdir}`;
       try {
         // Use the modern Foundry API (v13+) with fallback for older versions
         const FilePickerAPI =

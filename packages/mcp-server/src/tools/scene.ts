@@ -181,6 +181,61 @@ export class SceneTools {
           },
         },
       },
+      {
+        name: 'place-scene-props',
+        description:
+          'Place pickable/decorative prop images (e.g. Pixelrepo sprites) as Tiles on a tactical scene (dungeon/cave/house — NOT town/village overviews). Each prop uploads a local image and creates a Tile at image-pixel coordinates, optionally recording a linked dnd5e item (by compendium uuid + name) as a flag so the GM can grant it on pickup. Defaults to the active scene. Used by the objets-de-scene skill.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sceneName: {
+              type: 'string',
+              description:
+                'Optional target scene name or ID. Defaults to the currently active scene.',
+            },
+            props: {
+              type: 'array',
+              minItems: 1,
+              description: 'The props to place on the scene.',
+              items: {
+                type: 'object',
+                properties: {
+                  imagePath: {
+                    type: 'string',
+                    description: 'Absolute path to the local prop image (PNG/JPG, transparency recommended).',
+                  },
+                  x: { type: 'number', description: 'X position in image pixels (top-left of the tile).' },
+                  y: { type: 'number', description: 'Y position in image pixels (top-left of the tile).' },
+                  width: {
+                    type: 'number',
+                    description: 'Tile width in pixels. Defaults to 100 (≈ one grid square at 100px grids).',
+                  },
+                  height: {
+                    type: 'number',
+                    description: 'Tile height in pixels. Defaults to 100.',
+                  },
+                  rotation: { type: 'number', description: 'Optional rotation in degrees (default 0).' },
+                  label: {
+                    type: 'string',
+                    description: 'Human-readable label for this prop (e.g. "Torche"). Recorded as a flag.',
+                  },
+                  lootItemUuid: {
+                    type: 'string',
+                    description:
+                      'Optional dnd5e compendium item uuid to link (from search-compendium), recorded as a flag so the GM can grant it when a player picks the prop up.',
+                  },
+                  lootItemName: {
+                    type: 'string',
+                    description: 'Optional linked item display name (e.g. "Torch").',
+                  },
+                },
+                required: ['imagePath', 'x', 'y'],
+              },
+            },
+          },
+          required: ['props'],
+        },
+      },
     ];
   }
 
@@ -403,6 +458,91 @@ export class SceneTools {
       gridEnabled,
       wallsCreated: walls.length,
     };
+  }
+
+  /**
+   * Place pickable/decorative prop images as Tiles on a tactical scene. Each prop's local
+   * image is uploaded to Foundry (worlds/<id>/scene-props), then a Tile is created at the
+   * given image-pixel coordinates with an optional linked dnd5e item recorded as a flag.
+   * Used by the objets-de-scene skill (dungeon/cave/house scenes — not town overviews).
+   */
+  async handlePlaceSceneProps(args: any): Promise<any> {
+    const propSchema = z.object({
+      imagePath: z.string(),
+      x: z.number(),
+      y: z.number(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      rotation: z.number().optional(),
+      label: z.string().optional(),
+      lootItemUuid: z.string().optional(),
+      lootItemName: z.string().optional(),
+    });
+    const schema = z.object({
+      sceneName: z.string().optional(),
+      props: z.array(propSchema).min(1),
+    });
+    const { sceneName, props } = schema.parse(args);
+
+    this.logger.info('Placing scene props', { sceneName, count: props.length });
+
+    // Upload each prop image (deduped by path) and build the tile payloads.
+    const uploadedByPath = new Map<string, string>();
+    const tiles: any[] = [];
+    for (const prop of props) {
+      let webPath = uploadedByPath.get(prop.imagePath);
+      if (!webPath) {
+        let imageBuffer: Buffer;
+        try {
+          imageBuffer = await readFile(prop.imagePath);
+        } catch (error) {
+          throw new Error(
+            `Cannot read prop image "${prop.imagePath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+        }
+        const filename = basename(prop.imagePath);
+        const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
+          filename,
+          imageData: imageBuffer.toString('base64'),
+          subdir: 'scene-props',
+        });
+        if (!uploadResult?.success) {
+          throw new Error(
+            `Failed to upload prop "${filename}" to Foundry: ${uploadResult?.error || 'unknown error'}`
+          );
+        }
+        webPath = uploadResult.path as string;
+        uploadedByPath.set(prop.imagePath, webPath);
+        this.logger.info('Prop image uploaded to Foundry', { webPath });
+      }
+      tiles.push({
+        src: webPath,
+        x: prop.x,
+        y: prop.y,
+        width: prop.width,
+        height: prop.height,
+        rotation: prop.rotation,
+        label: prop.label,
+        lootItemUuid: prop.lootItemUuid,
+        lootItemName: prop.lootItemName,
+      });
+    }
+
+    try {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.create-scene-tiles', {
+        sceneIdentifier: sceneName,
+        tiles,
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to place scene props', error);
+      throw new Error(
+        `Failed to place scene props: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   /** Lit largeur/hauteur depuis l'en-tête PNG ou JPEG ; sinon valeurs carrées par défaut. */

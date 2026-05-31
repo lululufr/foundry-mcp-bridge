@@ -1541,6 +1541,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'place-scene-props':
+                  result = await sceneTools.handlePlaceSceneProps(args);
+
+                  break;
+
                 // Actor creation tools
 
                 case 'create-actor-from-compendium':

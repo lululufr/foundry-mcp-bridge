@@ -7100,6 +7100,122 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Place decorative/loot Tiles on a scene (skill objets-de-scene). Each tile shows an
+   * already-uploaded image (Pixelrepo prop) at image-pixel coordinates, sized in pixels.
+   * A linked dnd5e item (uuid + name) is recorded as a module flag so the GM can grant it
+   * to a player on pickup; the tile itself stays a plain visual (no extra module required).
+   * Defaults to the active scene.
+   */
+  async createSceneTiles(data: {
+    sceneIdentifier?: string;
+    tiles: Array<{
+      src: string;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      rotation?: number;
+      label?: string;
+      lootItemUuid?: string;
+      lootItemName?: string;
+    }>;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: [data.sceneIdentifier ?? 'active'],
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    const tiles = Array.isArray(data.tiles) ? data.tiles : [];
+    if (tiles.length === 0) {
+      throw new Error('createSceneTiles requires a non-empty "tiles" array');
+    }
+
+    // Resolve target scene: explicit identifier (id or name) or the active scene.
+    const scenes = (game.scenes as any)?.contents || [];
+    const scene = data.sceneIdentifier
+      ? scenes.find(
+          (s: any) =>
+            s.id === data.sceneIdentifier ||
+            s.name?.toLowerCase() === data.sceneIdentifier!.toLowerCase()
+        )
+      : (game.scenes as any).current;
+    if (!scene) {
+      throw new Error(
+        data.sceneIdentifier
+          ? `Scene "${data.sceneIdentifier}" not found`
+          : 'No active scene found'
+      );
+    }
+
+    const warnings: string[] = [];
+    const tilesData = tiles.map((t, i) => {
+      if (!t.src || typeof t.src !== 'string') {
+        warnings.push(`tile #${i}: "src" manquant`);
+      }
+      const w = Math.max(1, Math.round(Number(t.width) || 100));
+      const h = Math.max(1, Math.round(Number(t.height) || 100));
+      const flags: any = {};
+      if (t.lootItemUuid || t.lootItemName || t.label) {
+        flags[this.moduleId] = {
+          loot: true,
+          lootItemUuid: t.lootItemUuid ?? null,
+          lootItemName: t.lootItemName ?? null,
+          label: t.label ?? t.lootItemName ?? null,
+        };
+      }
+      // Foundry v13/v14: Tile texture lives at texture.src (legacy "img" was migrated).
+      return {
+        texture: { src: t.src },
+        x: Math.round(t.x),
+        y: Math.round(t.y),
+        width: w,
+        height: h,
+        rotation: Number(t.rotation) || 0,
+        // Above the background, below tokens (default token elevation/sort).
+        sort: 10,
+        hidden: false,
+        ...(Object.keys(flags).length ? { flags } : {}),
+      };
+    });
+
+    this.auditLog('createSceneTiles', { scene: scene.id, count: tilesData.length }, 'success');
+
+    try {
+      const created = await scene.createEmbeddedDocuments('Tile', tilesData);
+      return {
+        success: created.length > 0,
+        sceneId: scene.id,
+        sceneName: scene.name,
+        tilesCreated: created.length,
+        tiles: created.map((tile: any, i: number) => ({
+          id: tile.id,
+          src: tilesData[i]?.texture?.src,
+          x: tilesData[i]?.x,
+          y: tilesData[i]?.y,
+          width: tilesData[i]?.width,
+          height: tilesData[i]?.height,
+          lootItemName: tilesData[i]?.flags?.[this.moduleId]?.lootItemName,
+        })),
+        warnings: warnings.length ? warnings : undefined,
+      };
+    } catch (error) {
+      this.auditLog(
+        'createSceneTiles',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to create scene tiles: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Delete map Notes from a scene, by id list or all of them. Lets pins be re-placed/edited
    * without re-importing the whole scene.
    */
