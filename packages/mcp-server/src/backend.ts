@@ -1582,6 +1582,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'delete-journal':
+                  result = await questCreationTools.handleDeleteJournal(args);
+
+                  break;
+
                 // Dice roll tools
 
                 case 'request-player-rolls':
@@ -1669,6 +1674,11 @@ async function startBackend(): Promise<void> {
 
                 case 'switch-scene':
                   result = await mapGenerationTools.switchScene(args);
+
+                  break;
+
+                case 'delete-scene':
+                  result = await mapGenerationTools.deleteScene(args);
 
                   break;
 

@@ -234,7 +234,44 @@ export class QuestCreationTools {
           required: ['searchQuery'],
         },
       },
+      {
+        name: 'delete-journal',
+        description:
+          'Delete one or more journal entries (quests, dashboards, lore notes) by name or ID. Irreversible. Use list-journals first to get the IDs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            journalIdentifiers: {
+              type: 'array',
+              items: { type: 'string' },
+              minItems: 1,
+              description: 'Journal entry names or IDs to delete.',
+            },
+          },
+          required: ['journalIdentifiers'],
+        },
+      },
     ];
+  }
+
+  /**
+   * Handle delete journal request
+   */
+  async handleDeleteJournal(args: any): Promise<any> {
+    const schema = z.object({
+      journalIdentifiers: z.array(z.string()).min(1),
+    });
+    const { journalIdentifiers } = schema.parse(args);
+
+    try {
+      return await this.foundryClient.query('jdr-mcp-bridge.delete-journals', {
+        journalIdentifiers,
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to delete journals: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   /**

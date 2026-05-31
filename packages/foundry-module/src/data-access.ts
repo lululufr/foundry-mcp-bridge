@@ -4791,6 +4791,9 @@ export class FoundryDataAccess {
 
           tokenData.push({
             ...tokenDoc,
+            // Carry the actor's (possibly custom) name onto the token, instead of
+            // the prototype token's base name (e.g. "Bandit" for "Sbire Couteau").
+            name: (actor as any).name ?? tokenDoc.name,
             x: position.x,
             y: position.y,
             actorId: actorId,
@@ -4925,7 +4928,16 @@ export class FoundryDataAccess {
     switch (placement) {
       case 'coordinates':
         if (coordinates && coordinates[index]) {
-          return coordinates[index];
+          // Clamp explicit coordinates to the scene so tokens never spawn
+          // off-canvas (where Foundry corner-clamps them and they get "stuck").
+          const dims = (scene as any).dimensions || {};
+          const dimW = dims.width ?? scene.width ?? 0;
+          const dimH = dims.height ?? scene.height ?? 0;
+          const c = coordinates[index];
+          return {
+            x: dimW ? Math.min(Math.max(0, c.x), Math.max(0, dimW - gridSize)) : c.x,
+            y: dimH ? Math.min(Math.max(0, c.y), Math.max(0, dimH - gridSize)) : c.y,
+          };
         }
         // Fallback to grid if coordinates not provided or insufficient
         const fallbackCols = Math.ceil(Math.sqrt(index + 1));
@@ -6419,22 +6431,42 @@ export class FoundryDataAccess {
         throw new Error(`Token ${data.tokenId} not found in current scene`);
       }
 
+      // Clamp the requested position to the scene bounds so a token can never be
+      // pushed off-canvas (out-of-bounds tokens get silently corner-clamped by
+      // Foundry and then become hard to move again).
+      const dims = (scene as any).dimensions || {};
+      const gridSize = (scene as any).grid?.size || 100;
+      const sceneW = dims.width ?? (scene as any).width ?? 0;
+      const sceneH = dims.height ?? (scene as any).height ?? 0;
+      const tokW = ((token as any).width || 1) * gridSize;
+      const tokH = ((token as any).height || 1) * gridSize;
+      const clampedX = sceneW ? Math.min(Math.max(0, data.x), Math.max(0, sceneW - tokW)) : data.x;
+      const clampedY = sceneH ? Math.min(Math.max(0, data.y), Math.max(0, sceneH - tokH)) : data.y;
+
       // Update token position
       await token.update(
         {
-          x: data.x,
-          y: data.y,
+          x: clampedX,
+          y: clampedY,
         },
         { animate: data.animate !== false }
       );
 
-      this.auditLog('moveToken', data, 'success');
+      // Read the position BACK from the document — never echo the input, or the
+      // caller cannot tell whether Foundry actually committed/clamped the move.
+      const fresh = scene.tokens.get(data.tokenId);
+      const actualX = (fresh as any)?.x ?? clampedX;
+      const actualY = (fresh as any)?.y ?? clampedY;
+
+      this.auditLog('moveToken', { ...data, actualX, actualY }, 'success');
 
       return {
         success: true,
         tokenId: token.id,
         tokenName: token.name,
-        newPosition: { x: data.x, y: data.y },
+        requestedPosition: { x: data.x, y: data.y },
+        position: { x: actualX, y: actualY },
+        clamped: actualX !== data.x || actualY !== data.y,
         animated: data.animate !== false,
       };
     } catch (error) {
@@ -6564,6 +6596,124 @@ export class FoundryDataAccess {
       );
       throw new Error(
         `Failed to delete tokens: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Delete one or more scenes by id or name. If a target scene is active, another
+   * scene is activated first (Foundry forbids deleting the active scene). The
+   * background image file is left on disk.
+   */
+  async deleteScenes(data: { sceneIdentifiers: string[] }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: data.sceneIdentifiers,
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    try {
+      const deleted: { id: string; name: string }[] = [];
+      const failed: { identifier: string; reason: string }[] = [];
+
+      for (const ident of data.sceneIdentifiers) {
+        const scenes = game.scenes?.contents || [];
+        const target = scenes.find(
+          (s: any) => s.id === ident || s.name?.toLowerCase() === ident.toLowerCase()
+        );
+        if (!target) {
+          failed.push({ identifier: ident, reason: 'not found' });
+          continue;
+        }
+        try {
+          if ((target as any).active) {
+            const other = (game.scenes?.contents || []).find((s: any) => s.id !== target.id);
+            if (other) {
+              await (other as any).activate();
+            }
+          }
+          await (target as any).delete();
+          deleted.push({ id: String((target as any).id), name: (target as any).name });
+        } catch (e) {
+          failed.push({ identifier: ident, reason: e instanceof Error ? e.message : 'unknown' });
+        }
+      }
+
+      this.auditLog('deleteScenes', { ...data, deletedCount: deleted.length }, 'success');
+
+      return {
+        success: deleted.length > 0,
+        deletedCount: deleted.length,
+        deleted,
+        failed: failed.length ? failed : undefined,
+      };
+    } catch (error) {
+      this.auditLog(
+        'deleteScenes',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to delete scenes: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Delete one or more journal entries by id or name.
+   */
+  async deleteJournals(data: { journalIdentifiers: string[] }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: data.journalIdentifiers,
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    try {
+      const deleted: { id: string; name: string }[] = [];
+      const failed: { identifier: string; reason: string }[] = [];
+
+      for (const ident of data.journalIdentifiers) {
+        const journals = (game as any).journal?.contents || [];
+        const target = journals.find(
+          (j: any) => j.id === ident || j.name?.toLowerCase() === ident.toLowerCase()
+        );
+        if (!target) {
+          failed.push({ identifier: ident, reason: 'not found' });
+          continue;
+        }
+        try {
+          await target.delete();
+          deleted.push({ id: target.id, name: target.name });
+        } catch (e) {
+          failed.push({ identifier: ident, reason: e instanceof Error ? e.message : 'unknown' });
+        }
+      }
+
+      this.auditLog('deleteJournals', { ...data, deletedCount: deleted.length }, 'success');
+
+      return {
+        success: deleted.length > 0,
+        deletedCount: deleted.length,
+        deleted,
+        failed: failed.length ? failed : undefined,
+      };
+    } catch (error) {
+      this.auditLog(
+        'deleteJournals',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to delete journals: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

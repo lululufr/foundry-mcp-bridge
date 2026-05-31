@@ -42,6 +42,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.getActiveScene`] = this.handleGetActiveScene.bind(this);
     CONFIG.queries[`${modulePrefix}.list-scenes`] = this.handleListScenes.bind(this);
     CONFIG.queries[`${modulePrefix}.switch-scene`] = this.handleSwitchScene.bind(this);
+    CONFIG.queries[`${modulePrefix}.delete-scene`] = this.handleDeleteScene.bind(this);
+    CONFIG.queries[`${modulePrefix}.delete-journals`] = this.handleDeleteJournals.bind(this);
 
     // World queries
     CONFIG.queries[`${modulePrefix}.getWorldInfo`] = this.handleGetWorldInfo.bind(this);
@@ -962,6 +964,64 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to switch scene: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle delete scene request
+   */
+  private async handleDeleteScene(data: { sceneIdentifiers: string[] }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (
+        !data.sceneIdentifiers ||
+        !Array.isArray(data.sceneIdentifiers) ||
+        data.sceneIdentifiers.length === 0
+      ) {
+        throw new Error('sceneIdentifiers array is required and must not be empty');
+      }
+
+      return await this.dataAccess.deleteScenes(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to delete scene: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle delete journals request
+   */
+  private async handleDeleteJournals(data: { journalIdentifiers: string[] }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (
+        !data.journalIdentifiers ||
+        !Array.isArray(data.journalIdentifiers) ||
+        data.journalIdentifiers.length === 0
+      ) {
+        throw new Error('journalIdentifiers array is required and must not be empty');
+      }
+
+      return await this.dataAccess.deleteJournals(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to delete journals: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

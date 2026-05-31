@@ -201,12 +201,18 @@ export class TokenManipulationTools {
         animate,
       });
 
-      this.logger.debug('Token moved successfully', { tokenId });
+      this.logger.debug('Token moved successfully', { tokenId, result });
 
+      // Report the REAL position read back from Foundry, not an echo of the input.
+      // If Foundry clamped the move (e.g. out-of-bounds), `position` differs from
+      // `requestedPosition` and `clamped` is true.
+      const position = result?.position ?? { x, y };
       return {
         success: true,
         tokenId,
-        newPosition: { x, y },
+        requestedPosition: { x, y },
+        position,
+        clamped: result?.clamped ?? false,
         animated: animate,
       };
     } catch (error) {

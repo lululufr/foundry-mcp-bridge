@@ -143,7 +143,42 @@ export class MapGenerationTools {
           required: ['scene_identifier'],
         },
       },
+      {
+        name: 'delete-scene',
+        description:
+          'Delete one or more Foundry scenes by name or ID. If a target scene is currently active, another scene is activated first. Irreversible. Note: the uploaded background image file is NOT removed from disk.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scene_identifiers: {
+              type: 'array',
+              items: { type: 'string' },
+              minItems: 1,
+              description: 'Scene names or IDs to delete.',
+            },
+          },
+          required: ['scene_identifiers'],
+        },
+      },
     ];
+  }
+
+  async deleteScene(input: any): Promise<any> {
+    const safeInput = input ?? {};
+    try {
+      const ids = Array.isArray(safeInput.scene_identifiers)
+        ? safeInput.scene_identifiers.filter((s: any) => typeof s === 'string' && s.trim())
+        : [];
+      if (ids.length === 0) {
+        return { success: false, error: 'scene_identifiers (non-empty array of names/IDs) is required' };
+      }
+      return await this.foundryClient.query('jdr-mcp-bridge.delete-scene', {
+        sceneIdentifiers: ids,
+      });
+    } catch (error: any) {
+      this.logger.error('Delete scene failed', { error, input: safeInput });
+      return { success: false, error: error?.message ?? 'Unknown error' };
+    }
   }
 
   async listScenes(input: any): Promise<any> {
