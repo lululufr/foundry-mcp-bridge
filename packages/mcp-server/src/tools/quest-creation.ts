@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { readFile } from 'fs/promises';
 import { FoundryClient } from '../foundry-client.js';
 import { Logger } from '../logger.js';
 import { ErrorHandler } from '../utils/error-handler.js';
@@ -251,7 +252,72 @@ export class QuestCreationTools {
           required: ['journalIdentifiers'],
         },
       },
+      {
+        name: 'sync-codex',
+        description:
+          'Synchronise le Codex de lore (WORLD/CODEX) vers Foundry : crée/met à jour un VRAI pack Compendium "Codex de Therra" (JournalEntry) ET un dossier de journaux du monde, rangés par catégorie. Idempotent (clé = slug d\'entité) : re-synchroniser ne crée pas de doublon, met à jour le contenu, résout les renvois entre entités en liens @UUID et supprime les entrées orphelines. Lit le bundle produit par `node tools/lore-sync/sync.mjs`. À relancer à chaque changement de lore.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            bundlePath: {
+              type: 'string',
+              description:
+                'Chemin absolu du codex-bundle.json. Défaut: C:/Users/lucas/Documents/JDR/WORLD/CODEX/codex-bundle.json. Régénéré par `node tools/lore-sync/sync.mjs`.',
+            },
+          },
+        },
+      },
     ];
+  }
+
+  /**
+   * Handle codex sync request: read the bundle file produced by tools/lore-sync/sync.mjs and
+   * push it to Foundry (compendium pack + world journal folder) via the bridge.
+   */
+  async handleSyncCodex(args: any): Promise<any> {
+    const schema = z.object({ bundlePath: z.string().optional() });
+    const { bundlePath } = schema.parse(args || {});
+    try {
+      const file =
+        bundlePath && bundlePath.trim()
+          ? bundlePath.trim()
+          : 'C:/Users/lucas/Documents/JDR/WORLD/CODEX/codex-bundle.json';
+
+      let bundle: any;
+      try {
+        bundle = JSON.parse(await readFile(file, 'utf8'));
+      } catch (e) {
+        throw new Error(
+          `Impossible de lire le bundle "${file}": ${
+            e instanceof Error ? e.message : 'inconnu'
+          }. Lance d'abord: node tools/lore-sync/sync.mjs`
+        );
+      }
+
+      if (!bundle || !Array.isArray(bundle.entries) || bundle.entries.length === 0) {
+        throw new Error('Bundle invalide : "entries" vide. Régénère avec sync.mjs.');
+      }
+
+      const result = await this.foundryClient.query('jdr-mcp-bridge.sync-codex', {
+        packLabel: bundle.packLabel,
+        packName: bundle.packName,
+        folderName: bundle.folderName,
+        entries: bundle.entries,
+      });
+
+      if (!result || result.error) {
+        throw new Error(result?.error || 'sync-codex a échoué côté Foundry');
+      }
+
+      return {
+        success: true,
+        source: file,
+        ...result,
+        message: `Codex synchronisé : ${result.upserted} entrée(s) dans le pack "${result.packLabel}" + le dossier "${result.folder}" (orphelins retirés : monde ${result.removedOrphans?.world ?? 0}, pack ${result.removedOrphans?.pack ?? 0}).`,
+      };
+    } catch (error) {
+      this.errorHandler.handleToolError(error, 'sync-codex', 'codex sync');
+    }
   }
 
   /**

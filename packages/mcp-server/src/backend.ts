@@ -1587,6 +1587,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'sync-codex':
+                  result = await questCreationTools.handleSyncCodex(args);
+
+                  break;
+
                 // Dice roll tools
 
                 case 'request-player-rolls':

@@ -44,6 +44,7 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.switch-scene`] = this.handleSwitchScene.bind(this);
     CONFIG.queries[`${modulePrefix}.delete-scene`] = this.handleDeleteScene.bind(this);
     CONFIG.queries[`${modulePrefix}.delete-journals`] = this.handleDeleteJournals.bind(this);
+    CONFIG.queries[`${modulePrefix}.sync-codex`] = this.handleSyncCodex.bind(this);
 
     // World queries
     CONFIG.queries[`${modulePrefix}.getWorldInfo`] = this.handleGetWorldInfo.bind(this);
@@ -1022,6 +1023,28 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to delete journals: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleSyncCodex(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data || !Array.isArray(data.entries) || data.entries.length === 0) {
+        throw new Error('sync-codex requires a non-empty "entries" array');
+      }
+
+      return await this.dataAccess.syncCodex(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to sync codex: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

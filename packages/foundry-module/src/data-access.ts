@@ -3828,6 +3828,237 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Synchronise le Codex de lore : upsert IDEMPOTENT (clé = flag `codexSlug`) d'un lot d'entrées
+   * d'entités vers DEUX cibles à la fois :
+   *   (a) un VRAI pack Compendium `world.<packName>` de type JournalEntry (créé si absent), et
+   *   (b) un dossier de journaux du MONDE (consultable/épinglable en jeu).
+   * Range par catégorie en sous-dossiers, résout les renvois `<a data-codex-slug>` en liens
+   * `@UUID` PROPRES À CHAQUE CIBLE (les liens du Codex pointent vers le Codex, ceux du pack vers le
+   * pack), et SUPPRIME les entrées devenues orphelines. Re-synchroniser ne crée jamais de doublon.
+   */
+  async syncCodex(bundle: {
+    packLabel?: string;
+    packName?: string;
+    folderName?: string;
+    entries: Array<{
+      slug: string;
+      name: string;
+      type: string;
+      category: string;
+      aliases?: string[];
+      source?: string;
+      summary?: string;
+      links?: string[];
+      html: string;
+    }>;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const FLAG = 'codexSlug';
+    const packName = bundle.packName || 'codex-therra';
+    const packLabel = bundle.packLabel || 'Codex de Therra';
+    const folderName = bundle.folderName || packLabel;
+    const entries = Array.isArray(bundle.entries) ? bundle.entries : [];
+    if (entries.length === 0) throw new Error('syncCodex: bundle.entries est vide');
+
+    const escapeHtml = (s: any) =>
+      String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // ── 1) Pack compendium (world) : réutiliser ou créer ──
+    const packCollection = `world.${packName}`;
+    let pack: any = (game as any).packs?.get(packCollection);
+    if (!pack) {
+      pack = await (globalThis as any).CompendiumCollection.createCompendium({
+        type: 'JournalEntry',
+        label: packLabel,
+        name: packName,
+        packageType: 'world',
+      });
+    }
+
+    // ── 2) Dossiers par catégorie (monde imbriqué sous une racine, + dans le pack) ──
+    const worldRoot = await this.ensureJournalFolder(folderName, null, null);
+    const categories = [...new Set(entries.map((e) => e.category))];
+    const worldCatFolder = new Map<string, string | null>();
+    const packCatFolder = new Map<string, string | null>();
+    for (const cat of categories) {
+      worldCatFolder.set(cat, await this.ensureJournalFolder(cat, worldRoot, null));
+      packCatFolder.set(cat, await this.ensureJournalFolder(cat, null, pack));
+    }
+
+    // ── Index des entrées existantes par slug (pour l'upsert) ──
+    const worldBySlug = new Map<string, any>();
+    for (const j of (game as any).journal) {
+      const s = j.getFlag?.(this.moduleId, FLAG);
+      if (s) worldBySlug.set(s, j);
+    }
+    const packDocs = await pack.getDocuments();
+    const packBySlug = new Map<string, any>();
+    for (const d of packDocs) {
+      const s = d.getFlag?.(this.moduleId, FLAG);
+      if (s) packBySlug.set(s, d);
+    }
+
+    // ── 3) PASS 1 : garantir l'existence (squelette) pour connaître les ids avant de lier ──
+    const idWorld = new Map<string, string>();
+    const idPack = new Map<string, string>();
+    for (const e of entries) {
+      let wj = worldBySlug.get(e.slug);
+      if (!wj) {
+        wj = await (globalThis as any).JournalEntry.create({
+          name: e.name,
+          folder: worldCatFolder.get(e.category) || worldRoot,
+          ownership: { default: 0 },
+          flags: { [this.moduleId]: { [FLAG]: e.slug, codex: true } },
+          pages: [{ type: 'text', name: e.name, text: { content: '' } }],
+        });
+        worldBySlug.set(e.slug, wj);
+      }
+      idWorld.set(e.slug, wj.id);
+
+      let pj = packBySlug.get(e.slug);
+      if (!pj) {
+        pj = await (globalThis as any).JournalEntry.create(
+          {
+            name: e.name,
+            folder: packCatFolder.get(e.category) || null,
+            flags: { [this.moduleId]: { [FLAG]: e.slug, codex: true } },
+            pages: [{ type: 'text', name: e.name, text: { content: '' } }],
+          },
+          { pack: packCollection }
+        );
+        packBySlug.set(e.slug, pj);
+      }
+      idPack.set(e.slug, pj.id);
+    }
+
+    // ── 4) PASS 2 : écrire le contenu avec liens @UUID résolus par cible ──
+    const buildContent = (e: any, resolve: (slug: string) => string | null): string => {
+      const html = e.html.replace(
+        /<a class="codex-link" data-codex-slug="([^"]+)">([\s\S]*?)<\/a>/g,
+        (_m: string, slug: string, label: string) => {
+          const uuid = resolve(slug);
+          return uuid ? `@UUID[${uuid}]{${label}}` : `<strong>${label}</strong>`;
+        }
+      );
+      const header = e.summary ? `<p><em>${escapeHtml(e.summary)}</em></p>\n<hr>\n` : '';
+      const aliases =
+        e.aliases && e.aliases.length ? ` · Alias : ${e.aliases.map(escapeHtml).join(', ')}` : '';
+      const footer = `\n<hr>\n<p style="opacity:.6"><small>Type : ${escapeHtml(
+        e.type
+      )}${aliases} · Source : ${escapeHtml(e.source || '')}</small></p>`;
+      return header + html + footer;
+    };
+    const resolveWorld = (slug: string) =>
+      idWorld.has(slug) ? `JournalEntry.${idWorld.get(slug)}` : null;
+    const resolvePack = (slug: string) =>
+      idPack.has(slug) ? `Compendium.${packCollection}.JournalEntry.${idPack.get(slug)}` : null;
+
+    for (const e of entries) {
+      await this.upsertCodexPage(
+        worldBySlug.get(e.slug),
+        e.name,
+        buildContent(e, resolveWorld),
+        worldCatFolder.get(e.category) || worldRoot
+      );
+      await this.upsertCodexPage(
+        packBySlug.get(e.slug),
+        e.name,
+        buildContent(e, resolvePack),
+        packCatFolder.get(e.category) || null
+      );
+    }
+
+    // ── 5) PASS 3 : retirer les entrées orphelines (slug absent du bundle) ──
+    const wanted = new Set(entries.map((e) => e.slug));
+    const removed = { world: 0, pack: 0 };
+    for (const [slug, doc] of worldBySlug) {
+      if (!wanted.has(slug)) {
+        await doc.delete();
+        removed.world++;
+      }
+    }
+    for (const [slug, doc] of packBySlug) {
+      if (!wanted.has(slug)) {
+        await doc.delete();
+        removed.pack++;
+      }
+    }
+
+    this.auditLog('syncCodex', { count: entries.length, pack: packCollection }, 'success');
+    return {
+      success: true,
+      pack: packCollection,
+      packLabel,
+      folder: folderName,
+      upserted: entries.length,
+      categories: categories.length,
+      removedOrphans: removed,
+    };
+  }
+
+  /**
+   * Crée ou retrouve un dossier JournalEntry. Si `pack` est fourni → dossier DANS le compendium ;
+   * sinon dossier du monde, éventuellement imbriqué sous `parentId`.
+   */
+  private async ensureJournalFolder(
+    name: string,
+    parentId: string | null,
+    pack: any
+  ): Promise<string | null> {
+    try {
+      if (pack) {
+        const existing = pack.folders?.find((f: any) => f.name === name);
+        if (existing) return existing.id;
+        const f = await (globalThis as any).Folder.create(
+          { name, type: 'JournalEntry' },
+          { pack: pack.collection }
+        );
+        return f?.id || null;
+      }
+      const existing = (game as any).folders?.find(
+        (f: any) =>
+          f.type === 'JournalEntry' && f.name === name && (f.folder?.id || null) === (parentId || null)
+      );
+      if (existing) return existing.id;
+      const f = await (globalThis as any).Folder.create({
+        name,
+        type: 'JournalEntry',
+        folder: parentId || null,
+        flags: { [this.moduleId]: { codex: true } },
+      });
+      return f?.id || null;
+    } catch (error) {
+      console.warn(`[${this.moduleId}] ensureJournalFolder("${name}") failed:`, error);
+      return null;
+    }
+  }
+
+  /** Met à jour le nom/dossier d'une entrée de codex + le contenu de sa page unique (idempotent). */
+  private async upsertCodexPage(
+    doc: any,
+    name: string,
+    content: string,
+    folderId: string | null
+  ): Promise<void> {
+    const update: any = {};
+    if (doc.name !== name) update.name = name;
+    if ((doc.folder?.id || null) !== (folderId || null)) update.folder = folderId || null;
+    if (Object.keys(update).length) await doc.update(update);
+
+    const page = doc.pages?.contents?.[0];
+    if (page) {
+      await doc.updateEmbeddedDocuments('JournalEntryPage', [
+        { _id: page.id, name, text: { content } },
+      ]);
+    } else {
+      await doc.createEmbeddedDocuments('JournalEntryPage', [
+        { type: 'text', name, text: { content } },
+      ]);
+    }
+  }
+
+  /**
    * List all journal entries with page metadata
    */
   async listJournals(): Promise<
