@@ -316,7 +316,10 @@ export class QuestCreationTools {
         message: `Codex synchronisé : ${result.upserted} entrée(s) dans le pack "${result.packLabel}" + le dossier "${result.folder}" (orphelins retirés : monde ${result.removedOrphans?.world ?? 0}, pack ${result.removedOrphans?.pack ?? 0}).`,
       };
     } catch (error) {
-      this.errorHandler.handleToolError(error, 'sync-codex', 'codex sync');
+      // On surface le message BRUT (pas de génériquisation) pour diagnostiquer côté Foundry.
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error('sync-codex failed', { error: msg });
+      throw new Error(`sync-codex: ${msg}`);
     }
   }
 

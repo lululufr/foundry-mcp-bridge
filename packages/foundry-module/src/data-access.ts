@@ -3865,16 +3865,20 @@ export class FoundryDataAccess {
       String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     // ── 1) Pack compendium (world) : réutiliser ou créer ──
+    // v13+ a déplacé CompendiumCollection sous foundry.documents.collections.* ; le global nu peut
+    // avoir disparu en v14 → résolution robuste avec repli.
     const packCollection = `world.${packName}`;
     let pack: any = (game as any).packs?.get(packCollection);
     if (!pack) {
-      pack = await (globalThis as any).CompendiumCollection.createCompendium({
-        type: 'JournalEntry',
-        label: packLabel,
-        name: packName,
-        packageType: 'world',
-      });
+      const CC =
+        (globalThis as any).foundry?.documents?.collections?.CompendiumCollection ||
+        (globalThis as any).CompendiumCollection;
+      if (!CC || typeof CC.createCompendium !== 'function') {
+        throw new Error('syncCodex: CompendiumCollection.createCompendium introuvable (API Foundry v14)');
+      }
+      pack = await CC.createCompendium({ type: 'JournalEntry', label: packLabel, name: packName });
     }
+    if (!pack) throw new Error(`syncCodex: impossible de créer/ouvrir le pack ${packCollection}`);
 
     // ── 2) Dossiers par catégorie (monde imbriqué sous une racine, + dans le pack) ──
     const worldRoot = await this.ensureJournalFolder(folderName, null, null);
