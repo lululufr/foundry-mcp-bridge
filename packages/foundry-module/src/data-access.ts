@@ -6971,6 +6971,7 @@ export class FoundryDataAccess {
       codexSlug?: string;
       journalName?: string;
       entryId?: string;
+      targetScene?: string;
       icon?: string;
       iconSize?: number;
       fontSize?: number;
@@ -7015,6 +7016,12 @@ export class FoundryDataAccess {
       journals.find((j: any) => j.name?.toLowerCase() === name.toLowerCase());
 
     const DEFAULT_ICON = 'icons/svg/book.svg';
+    const PASSAGE_ICON = 'icons/svg/door-exit.svg';
+    const allScenes = (game.scenes as any)?.contents || [];
+    const findScene = (ident: string) =>
+      allScenes.find(
+        (s: any) => s.id === ident || s.name?.toLowerCase() === ident.toLowerCase()
+      );
     const notesData: any[] = [];
     const warnings: string[] = [];
 
@@ -7031,8 +7038,17 @@ export class FoundryDataAccess {
         if (!entry) warnings.push(`note #${i}: journal "${n.journalName}" introuvable`);
       }
 
-      const label = n.label || entry?.name || 'Lieu';
+      // Passage pin: resolve target scene → stored as a flag, read by the click hook (main.ts).
+      let targetSceneId: string | undefined;
+      if (n.targetScene) {
+        const targetScene = findScene(n.targetScene);
+        if (targetScene) targetSceneId = targetScene.id;
+        else warnings.push(`note #${i}: targetScene "${n.targetScene}" introuvable`);
+      }
+
+      const label = n.label || entry?.name || (targetSceneId ? 'Passage' : 'Lieu');
       const pageId = entry?.pages?.contents?.[0]?.id ?? undefined;
+      const icon = n.icon || (targetSceneId ? PASSAGE_ICON : DEFAULT_ICON);
 
       notesData.push({
         entryId: entry?.id ?? null,
@@ -7040,11 +7056,14 @@ export class FoundryDataAccess {
         x: Math.round(n.x),
         y: Math.round(n.y),
         text: label,
-        texture: { src: n.icon || DEFAULT_ICON },
+        texture: { src: icon },
         iconSize: Math.max(32, Number(n.iconSize) || 40),
         fontSize: Math.max(8, Number(n.fontSize) || 28),
         textAnchor: 2, // CONST.TEXT_ANCHOR_POINTS.BOTTOM
         global: false,
+        ...(targetSceneId
+          ? { flags: { [this.moduleId]: { targetScene: targetSceneId } } }
+          : {}),
       });
     });
 
@@ -7061,6 +7080,7 @@ export class FoundryDataAccess {
           id: note.id,
           text: notesData[i]?.text,
           entryId: notesData[i]?.entryId,
+          targetScene: notesData[i]?.flags?.[this.moduleId]?.targetScene,
           x: notesData[i]?.x,
           y: notesData[i]?.y,
         })),

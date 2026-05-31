@@ -82,6 +82,11 @@ export class SceneTools {
               description:
                 'Optional absolute path to a JSON file containing an array of wall segments to create on the scene (e.g. the .walls.json produced by the Watabou "maison"/Dwellings generator). Each entry: { c:[x1,y1,x2,y2], movement, sight, door, doorState, direction }. Coordinates are in image pixels.',
             },
+            folderName: {
+              type: 'string',
+              description:
+                'Optional Scene folder name to file the new scene under (created if missing, e.g. "ACT I"). Defaults to "AI Generated Maps".',
+            },
           },
           required: ['imagePath', 'sceneName'],
         },
@@ -126,6 +131,11 @@ export class SceneTools {
                     type: 'string',
                     description: 'Alternative: link by explicit JournalEntry id.',
                   },
+                  targetScene: {
+                    type: 'string',
+                    description:
+                      'Optional scene name or ID to turn this pin into a "passage": double-clicking it navigates the GM to that scene. Can be combined with a label; takes precedence over journal linking for the click action.',
+                  },
                   icon: {
                     type: 'string',
                     description:
@@ -158,6 +168,7 @@ export class SceneTools {
       codexSlug: z.string().optional(),
       journalName: z.string().optional(),
       entryId: z.string().optional(),
+      targetScene: z.string().optional(),
       icon: z.string().optional(),
       iconSize: z.number().optional(),
       fontSize: z.number().optional(),
@@ -242,8 +253,10 @@ export class SceneTools {
       gridEnabled: z.boolean().default(false),
       gridSize: z.number().default(100),
       wallsPath: z.string().optional(),
+      folderName: z.string().optional(),
     });
-    const { imagePath, sceneName, gridEnabled, gridSize, wallsPath } = schema.parse(args);
+    const { imagePath, sceneName, gridEnabled, gridSize, wallsPath, folderName } =
+      schema.parse(args);
 
     this.logger.info('Importing map image as scene', { imagePath, sceneName, gridEnabled });
 
@@ -314,6 +327,9 @@ export class SceneTools {
       navigation: true,
       active: false,
       walls,
+      // Custom field consumed by the module (socket-bridge) to file the scene under a Scene
+      // folder; stripped before Scene.create. Defaults module-side to "AI Generated Maps".
+      folderName: folderName?.trim() || undefined,
     };
 
     this.foundryClient.broadcastMessage({

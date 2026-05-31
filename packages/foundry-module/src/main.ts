@@ -588,6 +588,45 @@ Hooks.once('ready', async () => {
   }
 });
 
+// Passage pins: double-clicking a map Note carrying our `targetScene` flag navigates the GM to
+// that scene (instead of opening a journal). Installed by wrapping the Note placeable's
+// double-left-click handler. Defensive: only patches when the method exists, guards against
+// double-patching, and always falls back to the original behavior for ordinary notes.
+Hooks.once('ready', () => {
+  try {
+    const g = globalThis as any;
+    const NoteClass: any = g.foundry?.canvas?.placeables?.Note ?? g.Note;
+    const proto = NoteClass?.prototype;
+    if (!proto || proto.__jdrPassagePatched) return;
+    const original = proto._onClickLeft2;
+    if (typeof original !== 'function') {
+      console.warn(`[${MODULE_ID}] Note._onClickLeft2 not found; passage pins disabled`);
+      return;
+    }
+    proto._onClickLeft2 = function (event: any) {
+      try {
+        const target = this?.document?.getFlag?.(MODULE_ID, 'targetScene');
+        if (target) {
+          const scenes = (game as any).scenes;
+          const scene = scenes?.get(target) || scenes?.find((s: any) => s.name === target);
+          if (scene) {
+            scene.view();
+            return;
+          }
+          ui.notifications?.warn(`Scène cible introuvable pour ce passage.`);
+        }
+      } catch (err) {
+        console.warn(`[${MODULE_ID}] Passage note click failed:`, err);
+      }
+      return original.call(this, event);
+    };
+    proto.__jdrPassagePatched = true;
+    console.log(`[${MODULE_ID}] Passage-note click handler installed`);
+  } catch (error) {
+    console.error(`[${MODULE_ID}] Failed to install passage-note handler:`, error);
+  }
+});
+
 // Handle settings menu close to check for changes
 Hooks.on('closeSettingsConfig', () => {
   try {

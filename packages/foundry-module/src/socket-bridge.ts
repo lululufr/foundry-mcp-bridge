@@ -307,9 +307,16 @@ export class SocketBridge {
       console.log(`[jdr-mcp-bridge] Scene data to create:`, sceneData);
       console.log(`[jdr-mcp-bridge] Scene name: "${sceneData.name}"`);
 
-      // Ensure "AI Generated Maps" folder exists and get its ID
-      console.log(`[jdr-mcp-bridge] Ensuring AI Generated Maps folder exists...`);
-      const folderId = await this.ensureAIMapsFolderExists();
+      // File the scene under a Scene folder. The backend may request a specific folder
+      // (sceneData.folderName, e.g. "ACT I"); otherwise default to "AI Generated Maps".
+      // folderName is a custom field → strip it before Scene.create.
+      const requestedFolder =
+        typeof sceneData.folderName === 'string' && sceneData.folderName.trim()
+          ? sceneData.folderName.trim()
+          : 'AI Generated Maps';
+      delete sceneData.folderName;
+      console.log(`[jdr-mcp-bridge] Ensuring Scene folder "${requestedFolder}" exists...`);
+      const folderId = await this.ensureSceneFolder(requestedFolder);
       console.log(`[jdr-mcp-bridge] Folder ID:`, folderId);
 
       // Add folder to scene data
@@ -415,42 +422,40 @@ export class SocketBridge {
   }
 
   /**
-   * Ensure "AI Generated Maps" folder exists for organizing generated scenes
+   * Ensure a Scene folder with the given name exists (created if missing) and return its ID.
+   * Used to file imported/generated scenes under a folder (e.g. "ACT I", "AI Generated Maps").
    */
-  private async ensureAIMapsFolderExists(): Promise<string | null> {
+  private async ensureSceneFolder(folderName: string): Promise<string | null> {
     try {
-      const folderName = 'AI Generated Maps';
-
       // Check if folder already exists
       const existingFolder = (globalThis as any).game.folders.find(
         (f: any) => f.type === 'Scene' && f.name === folderName
       );
 
       if (existingFolder) {
-        this.log(`AI Generated Maps folder already exists with ID: ${existingFolder.id}`);
+        this.log(`Scene folder "${folderName}" already exists with ID: ${existingFolder.id}`);
         return existingFolder.id;
       }
 
       // Create the folder
-      this.log('Creating AI Generated Maps folder...');
+      this.log(`Creating Scene folder "${folderName}"...`);
       const folder = await (globalThis as any).Folder.create({
         name: folderName,
         type: 'Scene',
-        description: 'Scenes created by AI Map Generation',
-        color: '#4a90e2', // Nice blue color
+        description: 'Scenes created via JDR MCP Bridge',
         sorting: 'a', // Sort alphabetically
       });
 
       if (folder) {
-        this.log(`Created AI Generated Maps folder with ID: ${folder.id}`);
+        this.log(`Created Scene folder "${folderName}" with ID: ${folder.id}`);
         return folder.id;
       }
 
-      this.log('Failed to create AI Generated Maps folder');
+      this.log(`Failed to create Scene folder "${folderName}"`);
       return null;
     } catch (error) {
       this.log(
-        `Error managing AI Generated Maps folder: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `Error managing Scene folder "${folderName}": ${error instanceof Error ? error.message : 'Unknown error'}`
       );
       return null;
     }
