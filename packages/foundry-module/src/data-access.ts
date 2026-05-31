@@ -6954,6 +6954,132 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Create map Notes (journal pins / "lieux-dits") on a scene.
+   *
+   * Each note marks a point of interest at image-pixel coordinates and, when resolvable, links
+   * to a world JournalEntry so clicking the pin opens its lore. A note is linked by, in order of
+   * priority: explicit `entryId` → Codex `codexSlug` flag → `journalName`. If none resolves, the
+   * note is still created as a label-only pin (with a per-note warning). Used for city/village
+   * overview scenes where we want lieu-dit markers instead of creature tokens.
+   */
+  async createSceneNotes(data: {
+    sceneIdentifier?: string;
+    notes: Array<{
+      x: number;
+      y: number;
+      label?: string;
+      codexSlug?: string;
+      journalName?: string;
+      entryId?: string;
+      icon?: string;
+      iconSize?: number;
+      fontSize?: number;
+    }>;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: [data.sceneIdentifier ?? 'active'],
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    const notes = Array.isArray(data.notes) ? data.notes : [];
+    if (notes.length === 0) {
+      throw new Error('createSceneNotes requires a non-empty "notes" array');
+    }
+
+    // Resolve target scene: explicit identifier (id or name) or the active scene.
+    const scenes = (game.scenes as any)?.contents || [];
+    const scene = data.sceneIdentifier
+      ? scenes.find(
+          (s: any) =>
+            s.id === data.sceneIdentifier ||
+            s.name?.toLowerCase() === data.sceneIdentifier!.toLowerCase()
+        )
+      : (game.scenes as any).current;
+    if (!scene) {
+      throw new Error(
+        data.sceneIdentifier
+          ? `Scene "${data.sceneIdentifier}" not found`
+          : 'No active scene found'
+      );
+    }
+
+    // Find a world JournalEntry by Codex slug flag (set by syncCodex) or by name.
+    const journals = (game as any).journal?.contents || [];
+    const findBySlug = (slug: string) =>
+      journals.find((j: any) => j.getFlag?.(this.moduleId, 'codexSlug') === slug);
+    const findByName = (name: string) =>
+      journals.find((j: any) => j.name?.toLowerCase() === name.toLowerCase());
+
+    const DEFAULT_ICON = 'icons/svg/book.svg';
+    const notesData: any[] = [];
+    const warnings: string[] = [];
+
+    notes.forEach((n, i) => {
+      let entry: any = null;
+      if (n.entryId) {
+        entry = (game as any).journal?.get(n.entryId) || null;
+        if (!entry) warnings.push(`note #${i}: entryId "${n.entryId}" introuvable`);
+      } else if (n.codexSlug) {
+        entry = findBySlug(n.codexSlug) || null;
+        if (!entry) warnings.push(`note #${i}: codexSlug "${n.codexSlug}" introuvable`);
+      } else if (n.journalName) {
+        entry = findByName(n.journalName) || null;
+        if (!entry) warnings.push(`note #${i}: journal "${n.journalName}" introuvable`);
+      }
+
+      const label = n.label || entry?.name || 'Lieu';
+      const pageId = entry?.pages?.contents?.[0]?.id ?? undefined;
+
+      notesData.push({
+        entryId: entry?.id ?? null,
+        pageId,
+        x: Math.round(n.x),
+        y: Math.round(n.y),
+        text: label,
+        texture: { src: n.icon || DEFAULT_ICON },
+        iconSize: Math.max(32, Number(n.iconSize) || 40),
+        fontSize: Math.max(8, Number(n.fontSize) || 28),
+        textAnchor: 2, // CONST.TEXT_ANCHOR_POINTS.BOTTOM
+        global: false,
+      });
+    });
+
+    this.auditLog('createSceneNotes', { scene: scene.id, count: notesData.length }, 'success');
+
+    try {
+      const created = await scene.createEmbeddedDocuments('Note', notesData);
+      return {
+        success: created.length > 0,
+        sceneId: scene.id,
+        sceneName: scene.name,
+        notesCreated: created.length,
+        notes: created.map((note: any, i: number) => ({
+          id: note.id,
+          text: notesData[i]?.text,
+          entryId: notesData[i]?.entryId,
+          x: notesData[i]?.x,
+          y: notesData[i]?.y,
+        })),
+        warnings: warnings.length ? warnings : undefined,
+      };
+    } catch (error) {
+      this.auditLog(
+        'createSceneNotes',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to create scene notes: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Get detailed information about a token
    */
   async getTokenDetails(data: { tokenId: string }): Promise<any> {

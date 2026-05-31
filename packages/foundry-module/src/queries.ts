@@ -44,6 +44,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.switch-scene`] = this.handleSwitchScene.bind(this);
     CONFIG.queries[`${modulePrefix}.delete-scene`] = this.handleDeleteScene.bind(this);
     CONFIG.queries[`${modulePrefix}.delete-journals`] = this.handleDeleteJournals.bind(this);
+    CONFIG.queries[`${modulePrefix}.create-scene-notes`] =
+      this.handleCreateSceneNotes.bind(this);
     CONFIG.queries[`${modulePrefix}.sync-codex`] = this.handleSyncCodex.bind(this);
 
     // World queries
@@ -1023,6 +1025,31 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to delete journals: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle create scene notes request (map pins / "lieux-dits").
+   */
+  private async handleCreateSceneNotes(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data || !Array.isArray(data.notes) || data.notes.length === 0) {
+        throw new Error('notes array is required and must not be empty');
+      }
+
+      return await this.dataAccess.createSceneNotes(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to create scene notes: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

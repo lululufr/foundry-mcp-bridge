@@ -86,7 +86,105 @@ export class SceneTools {
           required: ['imagePath', 'sceneName'],
         },
       },
+      {
+        name: 'create-scene-note',
+        description:
+          'Place map Notes (journal pins / "lieux-dits") on a scene to mark points of interest. Each note sits at image-pixel coordinates and can link to a lore JournalEntry (by Codex slug) so clicking the pin opens it. Use this for city/village overview maps instead of creature tokens. Defaults to the active scene.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sceneName: {
+              type: 'string',
+              description:
+                'Optional target scene name or ID. Defaults to the currently active scene.',
+            },
+            notes: {
+              type: 'array',
+              minItems: 1,
+              description: 'The points of interest to pin on the map.',
+              items: {
+                type: 'object',
+                properties: {
+                  x: { type: 'number', description: 'X position in image pixels.' },
+                  y: { type: 'number', description: 'Y position in image pixels.' },
+                  label: {
+                    type: 'string',
+                    description:
+                      'Pin label shown on the map. Defaults to the linked journal entry name.',
+                  },
+                  codexSlug: {
+                    type: 'string',
+                    description:
+                      'Codex entity slug to link (e.g. "le-fanal-noye"). Clicking the pin opens that lore entry. Resolved against world JournalEntries synced by sync-codex.',
+                  },
+                  journalName: {
+                    type: 'string',
+                    description:
+                      'Alternative to codexSlug: link by journal entry name (case-insensitive).',
+                  },
+                  entryId: {
+                    type: 'string',
+                    description: 'Alternative: link by explicit JournalEntry id.',
+                  },
+                  icon: {
+                    type: 'string',
+                    description:
+                      'Optional Foundry icon path for the pin (default: icons/svg/book.svg).',
+                  },
+                  iconSize: {
+                    type: 'number',
+                    description: 'Pin icon size in pixels (min 32, default 40).',
+                  },
+                  fontSize: {
+                    type: 'number',
+                    description: 'Label font size in pixels (default 28).',
+                  },
+                },
+                required: ['x', 'y'],
+              },
+            },
+          },
+          required: ['notes'],
+        },
+      },
     ];
+  }
+
+  async handleCreateSceneNote(args: any): Promise<any> {
+    const noteSchema = z.object({
+      x: z.number(),
+      y: z.number(),
+      label: z.string().optional(),
+      codexSlug: z.string().optional(),
+      journalName: z.string().optional(),
+      entryId: z.string().optional(),
+      icon: z.string().optional(),
+      iconSize: z.number().optional(),
+      fontSize: z.number().optional(),
+    });
+    const schema = z.object({
+      sceneName: z.string().optional(),
+      notes: z.array(noteSchema).min(1),
+    });
+    const { sceneName, notes } = schema.parse(args);
+
+    this.logger.info('Creating scene notes', { sceneName, count: notes.length });
+
+    try {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.create-scene-notes', {
+        sceneIdentifier: sceneName,
+        notes,
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to create scene notes', error);
+      throw new Error(
+        `Failed to create scene notes: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   async handleGetCurrentScene(args: any): Promise<any> {

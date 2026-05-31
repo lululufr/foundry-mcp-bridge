@@ -1531,6 +1531,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'create-scene-note':
+                  result = await sceneTools.handleCreateSceneNote(args);
+
+                  break;
+
                 // Actor creation tools
 
                 case 'create-actor-from-compendium':
