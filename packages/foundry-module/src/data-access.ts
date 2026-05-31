@@ -7100,6 +7100,79 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Delete map Notes from a scene, by id list or all of them. Lets pins be re-placed/edited
+   * without re-importing the whole scene.
+   */
+  async deleteSceneNotes(data: {
+    sceneIdentifier?: string;
+    noteIds?: string[];
+    all?: boolean;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: [data.sceneIdentifier ?? 'active'],
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    // Resolve target scene: explicit identifier (id or name) or the active scene.
+    const scenes = (game.scenes as any)?.contents || [];
+    const scene = data.sceneIdentifier
+      ? scenes.find(
+          (s: any) =>
+            s.id === data.sceneIdentifier ||
+            s.name?.toLowerCase() === data.sceneIdentifier!.toLowerCase()
+        )
+      : (game.scenes as any).current;
+    if (!scene) {
+      throw new Error(
+        data.sceneIdentifier ? `Scene "${data.sceneIdentifier}" not found` : 'No active scene found'
+      );
+    }
+
+    const existingIds = scene.notes.map((n: any) => n.id);
+    let ids = data.all
+      ? existingIds
+      : Array.isArray(data.noteIds)
+        ? data.noteIds.filter((id) => existingIds.includes(id))
+        : [];
+    if (ids.length === 0) {
+      return {
+        success: true,
+        sceneId: scene.id,
+        sceneName: scene.name,
+        deletedCount: 0,
+        message: data.all ? 'No notes on scene' : 'No matching note ids on scene',
+      };
+    }
+
+    this.auditLog('deleteSceneNotes', { scene: scene.id, count: ids.length }, 'success');
+
+    try {
+      await scene.deleteEmbeddedDocuments('Note', ids);
+      return {
+        success: true,
+        sceneId: scene.id,
+        sceneName: scene.name,
+        deletedCount: ids.length,
+        deletedIds: ids,
+      };
+    } catch (error) {
+      this.auditLog(
+        'deleteSceneNotes',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to delete scene notes: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Get detailed information about a token
    */
   async getTokenDetails(data: { tokenId: string }): Promise<any> {

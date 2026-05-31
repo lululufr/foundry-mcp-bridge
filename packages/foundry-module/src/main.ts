@@ -595,33 +595,48 @@ Hooks.once('ready', async () => {
 Hooks.once('ready', () => {
   try {
     const g = globalThis as any;
-    const NoteClass: any = g.foundry?.canvas?.placeables?.Note ?? g.Note;
+    // Canonical accessor for the Note placeable class (stable v10→v14), with fallbacks.
+    const NoteClass: any =
+      g.CONFIG?.Note?.objectClass ?? g.foundry?.canvas?.placeables?.Note ?? g.Note;
     const proto = NoteClass?.prototype;
-    if (!proto || proto.__jdrPassagePatched) return;
-    const original = proto._onClickLeft2;
-    if (typeof original !== 'function') {
+    if (!proto) {
+      console.warn(`[${MODULE_ID}] Note placeable class not found; passage pins disabled`);
+      return;
+    }
+    if (proto.__jdrPassagePatched) return;
+
+    // If the note carries our targetScene flag, navigate the GM there and report handled.
+    const navigateIfPassage = function (this: any): boolean {
+      try {
+        const target = this?.document?.getFlag?.(MODULE_ID, 'targetScene');
+        if (!target) return false;
+        const scenes = (game as any).scenes;
+        const scene = scenes?.get(target) || scenes?.find((s: any) => s.name === target);
+        if (scene) {
+          scene.view();
+          return true;
+        }
+        ui.notifications?.warn('Scène cible introuvable pour ce passage.');
+        return true;
+      } catch (err) {
+        console.warn(`[${MODULE_ID}] Passage note click failed:`, err);
+        return false;
+      }
+    };
+
+    if (typeof proto._onClickLeft2 !== 'function') {
       console.warn(`[${MODULE_ID}] Note._onClickLeft2 not found; passage pins disabled`);
       return;
     }
+    const original = proto._onClickLeft2;
     proto._onClickLeft2 = function (event: any) {
-      try {
-        const target = this?.document?.getFlag?.(MODULE_ID, 'targetScene');
-        if (target) {
-          const scenes = (game as any).scenes;
-          const scene = scenes?.get(target) || scenes?.find((s: any) => s.name === target);
-          if (scene) {
-            scene.view();
-            return;
-          }
-          ui.notifications?.warn(`Scène cible introuvable pour ce passage.`);
-        }
-      } catch (err) {
-        console.warn(`[${MODULE_ID}] Passage note click failed:`, err);
-      }
+      if (navigateIfPassage.call(this)) return;
       return original.call(this, event);
     };
     proto.__jdrPassagePatched = true;
-    console.log(`[${MODULE_ID}] Passage-note click handler installed`);
+    console.log(
+      `[${MODULE_ID}] Passage-note click handler installed on ${NoteClass?.name}._onClickLeft2`
+    );
   } catch (error) {
     console.error(`[${MODULE_ID}] Failed to install passage-note handler:`, error);
   }

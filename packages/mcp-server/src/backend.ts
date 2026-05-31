@@ -1536,6 +1536,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'delete-scene-note':
+                  result = await sceneTools.handleDeleteSceneNote(args);
+
+                  break;
+
                 // Actor creation tools
 
                 case 'create-actor-from-compendium':

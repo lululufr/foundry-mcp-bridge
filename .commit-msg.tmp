@@ -1,0 +1,14 @@
+fix(scene): robust passage-note hook + add delete-scene-note
+
+The passage double-click hook failed to install on Foundry v14 (Note class
+resolution via foundry.canvas.placeables / global Note). Resolve the Note
+placeable class via the canonical CONFIG.Note.objectClass (stable v10-v14)
+with fallbacks, so double-clicking a targetScene pin navigates the GM.
+
+Add delete-scene-note tool + delete-scene-notes module query: remove map pins
+by id list or all of them, so pins can be re-placed/resized without re-importing
+the scene (avoids the re-import churn that breaks cross-scene passage links).
+
+Module v1.6.1.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

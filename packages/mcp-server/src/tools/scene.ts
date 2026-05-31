@@ -157,7 +157,59 @@ export class SceneTools {
           required: ['notes'],
         },
       },
+      {
+        name: 'delete-scene-note',
+        description:
+          'Delete map Notes (pins) from a scene, by id list or all of them. Lets pins be re-placed or resized without re-importing the whole scene. Defaults to the active scene.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sceneName: {
+              type: 'string',
+              description:
+                'Optional target scene name or ID. Defaults to the currently active scene.',
+            },
+            noteIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'IDs of the notes to delete (from create-scene-note or get-current-scene).',
+            },
+            all: {
+              type: 'boolean',
+              description: 'If true, delete every note on the scene (ignores noteIds).',
+            },
+          },
+        },
+      },
     ];
+  }
+
+  async handleDeleteSceneNote(args: any): Promise<any> {
+    const schema = z.object({
+      sceneName: z.string().optional(),
+      noteIds: z.array(z.string()).optional(),
+      all: z.boolean().optional(),
+    });
+    const { sceneName, noteIds, all } = schema.parse(args);
+
+    this.logger.info('Deleting scene notes', { sceneName, count: noteIds?.length, all });
+
+    try {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.delete-scene-notes', {
+        sceneIdentifier: sceneName,
+        noteIds,
+        all,
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to delete scene notes', error);
+      throw new Error(
+        `Failed to delete scene notes: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   async handleCreateSceneNote(args: any): Promise<any> {
