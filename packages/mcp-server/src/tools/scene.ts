@@ -261,7 +261,129 @@ export class SceneTools {
           required: ['props'],
         },
       },
+      {
+        name: 'set-scene-ambiance',
+        description:
+          "Set a scene's dynamic lighting and ambient FX to match the lore (skill mise-en-scene, étape 3ter). Adjusts the global darkness level (0=full day, 1=pitch black), global illumination on/off, and a core weather/particle effect, and optionally (re)creates AmbientLight sources (torches, hearths, windows) at image-pixel coordinates. Only apply effects that fit the place and time of day. Defaults to the active scene.",
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sceneName: {
+              type: 'string',
+              description:
+                'Optional target scene name or ID. Defaults to the currently active scene.',
+            },
+            darkness: {
+              type: 'number',
+              description:
+                'Global darkness level 0..1. ~0 clear day; ~0.3-0.5 dusk/undergrowth; ~0.7-1.0 night / windowless interior / dungeon / cave / crypt.',
+            },
+            globalLight: {
+              type: 'boolean',
+              description:
+                'Global illumination. true for daylit overviews (town/village by day) and sunny exteriors; false for dark tactical maps so only the light sources (and token vision) matter.',
+            },
+            weather: {
+              type: 'string',
+              description:
+                "Core Foundry weather/particle effect id, or '' to clear. Common: rain, snow, fog, leaves, blizzard, rainStorm. Use ONLY when it fits (never rain in a dry crypt). Omit to leave unchanged.",
+            },
+            lights: {
+              type: 'array',
+              description:
+                'AmbientLight sources to add (torches, hearths, candles, windows). Align them with the scene props and geometry already placed.',
+              items: {
+                type: 'object',
+                properties: {
+                  x: { type: 'number', description: 'X position in image/scene pixels (light center).' },
+                  y: { type: 'number', description: 'Y position in image/scene pixels (light center).' },
+                  dim: {
+                    type: 'number',
+                    description: 'Dim (faint) light radius in scene distance units (feet). Torch ≈ 40, candle ≈ 10.',
+                  },
+                  bright: {
+                    type: 'number',
+                    description: 'Bright light radius in scene distance units (feet). Torch ≈ 20, candle ≈ 5.',
+                  },
+                  color: {
+                    type: 'string',
+                    description: 'Hex tint. Warm fire ≈ #ffaa55, candle ≈ #ffcc88, cold window/moon ≈ #aaccff. Default #ffaa55.',
+                  },
+                  alpha: { type: 'number', description: 'Light intensity 0..1 (default 0.5).' },
+                  angle: { type: 'number', description: 'Beam angle in degrees (default 360 = full circle).' },
+                  rotation: { type: 'number', description: 'Beam rotation in degrees (default 0).' },
+                  animationType: {
+                    type: 'string',
+                    description: "Foundry light animation: 'torch', 'flame', 'pulse', 'sunburst', 'fog', 'ghost', etc. Omit for a steady light.",
+                  },
+                  animationSpeed: { type: 'number', description: 'Animation speed 1..10 (default 3).' },
+                  animationIntensity: { type: 'number', description: 'Animation intensity 1..10 (default 5).' },
+                },
+                required: ['x', 'y'],
+              },
+            },
+            replaceLights: {
+              type: 'boolean',
+              description:
+                'If true, delete the ambiance lights previously created by this tool before adding the new ones (hand-placed lights are left untouched). Use to re-apply lighting without duplicates.',
+            },
+          },
+        },
+      },
     ];
+  }
+
+  async handleSetSceneAmbiance(args: any): Promise<any> {
+    const lightSchema = z.object({
+      x: z.number(),
+      y: z.number(),
+      dim: z.number().optional(),
+      bright: z.number().optional(),
+      color: z.string().optional(),
+      alpha: z.number().optional(),
+      angle: z.number().optional(),
+      rotation: z.number().optional(),
+      animationType: z.string().optional(),
+      animationSpeed: z.number().optional(),
+      animationIntensity: z.number().optional(),
+    });
+    const schema = z.object({
+      sceneName: z.string().optional(),
+      darkness: z.number().min(0).max(1).optional(),
+      globalLight: z.boolean().optional(),
+      weather: z.string().optional(),
+      lights: z.array(lightSchema).optional(),
+      replaceLights: z.boolean().optional(),
+    });
+    const { sceneName, darkness, globalLight, weather, lights, replaceLights } = schema.parse(args);
+
+    this.logger.info('Setting scene ambiance', {
+      sceneName,
+      darkness,
+      globalLight,
+      weather,
+      lightCount: lights?.length,
+    });
+
+    try {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.set-scene-ambiance', {
+        sceneIdentifier: sceneName,
+        darkness,
+        globalLight,
+        weather,
+        lights,
+        replaceLights,
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to set scene ambiance', error);
+      throw new Error(
+        `Failed to set scene ambiance: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   async handleDeleteSceneNote(args: any): Promise<any> {

@@ -7564,6 +7564,132 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Set a scene's dynamic-lighting environment and ambient FX (skill mise-en-scene, étape 3ter).
+   * Adjusts the global darkness level, global illumination, and the core weather/particle effect,
+   * and optionally (re)creates AmbientLight sources at image-pixel coordinates (torches, hearths,
+   * windows…). Lights created here carry a module flag so `replaceLights` can wipe only our own
+   * ambiance lights without touching hand-placed ones. Foundry v14 schema:
+   * `environment.darknessLevel` + `environment.globalLight.enabled`; `weather` is a core effect id
+   * (e.g. rain, snow, fog, leaves, blizzard, rainStorm — '' clears it). Defaults to the active scene.
+   */
+  async setSceneAmbiance(data: {
+    sceneIdentifier?: string;
+    darkness?: number;
+    globalLight?: boolean;
+    weather?: string | null;
+    lights?: Array<{
+      x: number;
+      y: number;
+      dim?: number;
+      bright?: number;
+      color?: string;
+      alpha?: number;
+      angle?: number;
+      rotation?: number;
+      animationType?: string;
+      animationSpeed?: number;
+      animationIntensity?: number;
+    }>;
+    replaceLights?: boolean;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: [data.sceneIdentifier ?? 'active'],
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    // Resolve target scene: explicit identifier (id or name) or the active scene.
+    const scenes = (game.scenes as any)?.contents || [];
+    const scene = data.sceneIdentifier
+      ? scenes.find(
+          (s: any) =>
+            s.id === data.sceneIdentifier ||
+            s.name?.toLowerCase() === data.sceneIdentifier!.toLowerCase()
+        )
+      : (game.scenes as any).current;
+    if (!scene) {
+      throw new Error(
+        data.sceneIdentifier ? `Scene "${data.sceneIdentifier}" not found` : 'No active scene found'
+      );
+    }
+
+    // 1) Environment (darkness / global light / weather). v14 lives under `environment.*`.
+    const update: any = {};
+    if (typeof data.darkness === 'number') {
+      update['environment.darknessLevel'] = Math.min(1, Math.max(0, data.darkness));
+    }
+    if (typeof data.globalLight === 'boolean') {
+      update['environment.globalLight.enabled'] = data.globalLight;
+    }
+    if (data.weather !== undefined) {
+      update['weather'] = data.weather || '';
+    }
+    if (Object.keys(update).length > 0) {
+      await scene.update(update);
+    }
+
+    // 2) Ambient light sources. Replace only our own (flagged) lights when asked.
+    let deletedLights = 0;
+    let createdLights = 0;
+    const lights = Array.isArray(data.lights) ? data.lights : [];
+    if (data.replaceLights) {
+      const ourIds = scene.lights
+        .filter((l: any) => l.getFlag?.(this.moduleId, 'ambiance'))
+        .map((l: any) => l.id);
+      if (ourIds.length > 0) {
+        await scene.deleteEmbeddedDocuments('AmbientLight', ourIds);
+        deletedLights = ourIds.length;
+      }
+    }
+    if (lights.length > 0) {
+      const lightsData = lights.map((l) => ({
+        x: Math.round(l.x),
+        y: Math.round(l.y),
+        rotation: l.rotation ?? 0,
+        walls: true,
+        vision: false,
+        config: {
+          dim: l.dim ?? 40,
+          bright: l.bright ?? 20,
+          color: l.color ?? '#ffaa55',
+          alpha: typeof l.alpha === 'number' ? l.alpha : 0.5,
+          angle: l.angle ?? 360,
+          animation: l.animationType
+            ? {
+                type: l.animationType,
+                speed: l.animationSpeed ?? 3,
+                intensity: l.animationIntensity ?? 5,
+              }
+            : { type: null },
+        },
+        flags: { [this.moduleId]: { ambiance: true } },
+      }));
+      const created = await scene.createEmbeddedDocuments('AmbientLight', lightsData);
+      createdLights = created.length;
+    }
+
+    this.auditLog(
+      'setSceneAmbiance',
+      { scene: scene.id, env: update, createdLights, deletedLights },
+      'success'
+    );
+
+    return {
+      success: true,
+      sceneId: scene.id,
+      sceneName: scene.name,
+      darkness: scene.environment?.darknessLevel,
+      globalLight: scene.environment?.globalLight?.enabled,
+      weather: scene.weather || '',
+      lightsCreated: createdLights,
+      lightsDeleted: deletedLights,
+    };
+  }
+
+  /**
    * Get detailed information about a token
    */
   async getTokenDetails(data: { tokenId: string }): Promise<any> {

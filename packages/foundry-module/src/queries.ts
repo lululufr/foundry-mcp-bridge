@@ -50,6 +50,8 @@ export class QueryHandlers {
       this.handleDeleteSceneNotes.bind(this);
     CONFIG.queries[`${modulePrefix}.create-scene-tiles`] =
       this.handleCreateSceneTiles.bind(this);
+    CONFIG.queries[`${modulePrefix}.set-scene-ambiance`] =
+      this.handleSetSceneAmbiance.bind(this);
     CONFIG.queries[`${modulePrefix}.sync-codex`] = this.handleSyncCodex.bind(this);
 
     // World queries
@@ -1161,6 +1163,28 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to create scene tiles: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle setting a scene's dynamic-lighting environment + ambient FX (skill mise-en-scene,
+   * étape 3ter): darkness level, global light, core weather effect, and AmbientLight sources.
+   */
+  private async handleSetSceneAmbiance(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      return await this.dataAccess.setSceneAmbiance(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to set scene ambiance: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
