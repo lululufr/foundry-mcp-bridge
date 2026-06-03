@@ -29,6 +29,7 @@ import { DiceRollTools } from './tools/dice-roll.js';
 import { CampaignManagementTools } from './tools/campaign-management.js';
 
 import { OwnershipTools } from './tools/ownership.js';
+import { UserTools } from './tools/users.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
 
@@ -1175,6 +1176,8 @@ async function startBackend(): Promise<void> {
 
   const ownershipTools = new OwnershipTools({ foundryClient, logger });
 
+  const userTools = new UserTools({ foundryClient, logger });
+
   const tokenManipulationTools = new TokenManipulationTools({ foundryClient, logger });
 
   // Initialize mapgen-style backend components for map generation
@@ -1391,6 +1394,8 @@ async function startBackend(): Promise<void> {
     ...campaignManagementTools.getToolDefinitions(),
 
     ...ownershipTools.getToolDefinitions(),
+
+    ...userTools.getToolDefinitions(),
 
     ...tokenManipulationTools.getToolDefinitions(),
 
@@ -1635,6 +1640,28 @@ async function startBackend(): Promise<void> {
 
                 case 'list-actor-ownership':
                   result = await ownershipTools.handleToolCall('list-actor-ownership', args);
+
+                  break;
+
+                // User & document rights tools
+
+                case 'list-users':
+                  result = await userTools.handleToolCall('list-users', args);
+
+                  break;
+
+                case 'set-user-role':
+                  result = await userTools.handleToolCall('set-user-role', args);
+
+                  break;
+
+                case 'assign-default-character':
+                  result = await userTools.handleToolCall('assign-default-character', args);
+
+                  break;
+
+                case 'set-document-ownership':
+                  result = await userTools.handleToolCall('set-document-ownership', args);
 
                   break;
 

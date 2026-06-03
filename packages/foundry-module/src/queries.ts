@@ -96,6 +96,14 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.findPlayers`] = this.handleFindPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.findActor`] = this.handleFindActor.bind(this);
 
+    // User & document rights management (roles, default character, document ownership)
+    CONFIG.queries[`${modulePrefix}.listUsers`] = this.handleListUsers.bind(this);
+    CONFIG.queries[`${modulePrefix}.setUserRole`] = this.handleSetUserRole.bind(this);
+    CONFIG.queries[`${modulePrefix}.assignDefaultCharacter`] =
+      this.handleAssignDefaultCharacter.bind(this);
+    CONFIG.queries[`${modulePrefix}.setDocumentOwnership`] =
+      this.handleSetDocumentOwnership.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -813,6 +821,78 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to get actor ownership: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle list users request (roles, default character, owned actors)
+   */
+  async handleListUsers(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.listUsers(data || {});
+    } catch (error) {
+      throw new Error(
+        `Failed to list users: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle set user role request
+   */
+  async handleSetUserRole(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setUserRole(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to set user role: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle assign default character request
+   */
+  async handleAssignDefaultCharacter(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.assignDefaultCharacter(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to assign default character: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle set document ownership request
+   */
+  async handleSetDocumentOwnership(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setDocumentOwnership(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to set document ownership: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

@@ -6351,6 +6351,267 @@ export class FoundryDataAccess {
     }
   }
 
+  // ===== Gestion des droits : rôles utilisateurs, perso par défaut, ownership de documents =====
+
+  private readonly USER_ROLE_VALUES: Record<string, number> = {
+    NONE: 0,
+    PLAYER: 1,
+    TRUSTED: 2,
+    ASSISTANT: 3,
+    GAMEMASTER: 4,
+  };
+  private readonly USER_ROLE_LABELS_FR: Record<number, string> = {
+    0: 'Aucun',
+    1: 'Joueur',
+    2: 'De confiance',
+    3: 'Assistant-MJ',
+    4: 'MJ',
+  };
+  private readonly OWNERSHIP_LEVEL_NAMES: Record<number, string> = {
+    0: 'NONE',
+    1: 'LIMITED',
+    2: 'OBSERVER',
+    3: 'OWNER',
+  };
+
+  /** Numeric role for a user, tolerant of string roles. */
+  private getUserRoleValue(user: any): number {
+    if (typeof user?.role === 'number') return user.role;
+    return this.USER_ROLE_VALUES[String(user?.role).toUpperCase()] ?? 1;
+  }
+
+  /** Find a Foundry user by id, exact name, or partial (case-insensitive) name. */
+  private findUserByIdentifier(identifier: string): any {
+    if (!identifier) return null;
+    return (
+      game.users?.get(identifier) ||
+      game.users?.getName(identifier) ||
+      Array.from(game.users || []).find((u: any) =>
+        u.name?.toLowerCase().includes(identifier.toLowerCase())
+      ) ||
+      null
+    );
+  }
+
+  /** List all users with role, assigned character and (optionally) explicitly owned actors. */
+  async listUsers(data: { includeOwnedActors?: boolean } = {}): Promise<any> {
+    this.validateFoundryState();
+    const includeOwned = data?.includeOwnedActors !== false;
+    const allActors = Array.from(game.actors || []) as any[];
+    return (Array.from(game.users || []) as any[]).map(user => {
+      const roleNum = this.getUserRoleValue(user);
+      const charId =
+        user.character?.id ?? (typeof user.character === 'string' ? user.character : null);
+      const charActor = charId ? game.actors?.get(charId) : (user.character ?? null);
+      const result: any = {
+        id: user.id,
+        name: user.name,
+        role: this.USER_ROLE_LABELS_FR[roleNum] || String(roleNum),
+        roleValue: roleNum,
+        active: !!user.active,
+        isGM: !!user.isGM,
+        color: user.color ? String(user.color) : null,
+        character: charActor ? { id: charActor.id, name: charActor.name } : null,
+      };
+      // Only meaningful for players (GM implicitly owns everything → don't list).
+      if (includeOwned && !user.isGM) {
+        result.ownedActors = allActors
+          .filter(a => ((a.ownership || {})[user.id] ?? 0) === 3)
+          .map(a => ({ id: a.id, name: a.name }));
+      }
+      return result;
+    });
+  }
+
+  /** Change a user's role, with guards against lock-out and demoting the last GM. */
+  async setUserRole(data: {
+    userIdentifier: string;
+    role: number;
+    confirm?: boolean;
+  }): Promise<{ success: boolean; message?: string; error?: string }> {
+    this.validateFoundryState();
+    try {
+      const user = this.findUserByIdentifier(data.userIdentifier);
+      if (!user) return { success: false, error: `Utilisateur introuvable : ${data.userIdentifier}` };
+
+      const newRole = Number(data.role);
+      if (!(newRole in this.USER_ROLE_LABELS_FR)) {
+        return { success: false, error: `Rôle invalide : ${data.role}` };
+      }
+      // Guard: never change your own role (the GM running the bridge → avoid lock-out).
+      if (user.id === game.user?.id) {
+        return {
+          success: false,
+          error: 'Refus : impossible de modifier votre propre rôle (risque de blocage du MJ/bridge).',
+        };
+      }
+      // Guard: promoting to GAMEMASTER requires explicit confirmation.
+      if (newRole === 4 && !data.confirm) {
+        return {
+          success: false,
+          error: `Promotion de ${user.name} en MJ : repassez avec confirm=true pour confirmer.`,
+        };
+      }
+      // Guard: do not demote the last remaining GM.
+      if (this.getUserRoleValue(user) === 4 && newRole < 4) {
+        const gmCount = (Array.from(game.users || []) as any[]).filter(
+          u => this.getUserRoleValue(u) === 4
+        ).length;
+        if (gmCount <= 1) {
+          return { success: false, error: 'Refus : impossible de rétrograder le dernier MJ du monde.' };
+        }
+      }
+
+      await user.update({ role: newRole });
+      return { success: true, message: `Rôle de ${user.name} → ${this.USER_ROLE_LABELS_FR[newRole]}` };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error setting user role:`, error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /** Set (or clear) a user's default character, optionally granting OWNER of that actor. */
+  async assignDefaultCharacter(data: {
+    userIdentifier: string;
+    actorIdentifier?: string;
+    clear?: boolean;
+    grantOwnership?: boolean;
+  }): Promise<{ success: boolean; message?: string; error?: string }> {
+    this.validateFoundryState();
+    try {
+      const user = this.findUserByIdentifier(data.userIdentifier);
+      if (!user) return { success: false, error: `Utilisateur introuvable : ${data.userIdentifier}` };
+
+      if (data.clear) {
+        await user.update({ character: null });
+        return { success: true, message: `Personnage par défaut de ${user.name} retiré.` };
+      }
+      if (!data.actorIdentifier) {
+        return { success: false, error: 'actorIdentifier requis (ou clear=true).' };
+      }
+      const actor = this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) return { success: false, error: `Acteur introuvable : ${data.actorIdentifier}` };
+
+      await user.update({ character: actor.id });
+      let ownershipNote = '';
+      if (data.grantOwnership !== false && !user.isGM) {
+        const newOwnership = { ...((actor as any).ownership || {}) };
+        newOwnership[user.id] = 3; // OWNER
+        await actor.update({ ownership: newOwnership });
+        ownershipNote = ' (+ OWNER accordé)';
+      }
+      return {
+        success: true,
+        message: `Personnage par défaut de ${user.name} → ${actor.name}${ownershipNote}`,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error assigning default character:`, error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /** Resolve a world document collection by document type. */
+  private getDocumentCollection(documentType: string): any {
+    const g = game as any;
+    switch (documentType) {
+      case 'JournalEntry':
+        return g.journal;
+      case 'Scene':
+        return g.scenes;
+      case 'Item':
+        return g.items;
+      case 'RollTable':
+        return g.tables;
+      case 'Macro':
+        return g.macros;
+      case 'Actor':
+        return g.actors;
+      default:
+        return null;
+    }
+  }
+
+  /** Find a document in a collection by id, exact name, or partial name. */
+  private findDocumentByIdentifier(collection: any, identifier: string): any {
+    if (!collection) return null;
+    return (
+      collection.get?.(identifier) ||
+      collection.getName?.(identifier) ||
+      (Array.from(collection) as any[]).find(d =>
+        d.name?.toLowerCase().includes(identifier.toLowerCase())
+      ) ||
+      null
+    );
+  }
+
+  /** Set ownership on a non-actor document (journal/scene/item/table/macro/actor). */
+  async setDocumentOwnership(data: {
+    documentType: string;
+    documentIdentifier: string;
+    target: string; // userIdentifier | 'default' | 'party' | 'all'
+    permission: number;
+    confirmBulkOperation?: boolean;
+  }): Promise<{ success: boolean; message?: string; error?: string; ownership?: any }> {
+    this.validateFoundryState();
+    try {
+      const collection = this.getDocumentCollection(data.documentType);
+      if (!collection) {
+        return { success: false, error: `Type de document non supporté : ${data.documentType}` };
+      }
+      const doc = this.findDocumentByIdentifier(collection, data.documentIdentifier);
+      if (!doc) {
+        return {
+          success: false,
+          error: `${data.documentType} introuvable : ${data.documentIdentifier}`,
+        };
+      }
+      const perm = Number(data.permission);
+      if (!(perm in this.OWNERSHIP_LEVEL_NAMES)) {
+        return { success: false, error: `Niveau de permission invalide : ${data.permission}` };
+      }
+
+      const targetRaw = String(data.target || '').toLowerCase();
+      const isBulk = targetRaw === 'default' || targetRaw === 'party' || targetRaw === 'all';
+      if (isBulk && !data.confirmBulkOperation) {
+        return {
+          success: false,
+          error: `Opération groupée (${data.target}) : repassez avec confirmBulkOperation=true.`,
+        };
+      }
+
+      const newOwnership = { ...((doc as any).ownership || {}) };
+      const affected: string[] = [];
+      if (targetRaw === 'default' || targetRaw === 'all') {
+        newOwnership.default = perm;
+        affected.push('tout le monde (default)');
+      }
+      if (targetRaw === 'party' || targetRaw === 'all') {
+        for (const u of Array.from(game.users || []) as any[]) {
+          if (!u.isGM) {
+            newOwnership[u.id] = perm;
+            affected.push(u.name);
+          }
+        }
+      }
+      if (!isBulk) {
+        const user = this.findUserByIdentifier(data.target);
+        if (!user) return { success: false, error: `Utilisateur introuvable : ${data.target}` };
+        newOwnership[user.id] = perm;
+        affected.push(user.name);
+      }
+
+      await doc.update({ ownership: newOwnership });
+      return {
+        success: true,
+        message: `${data.documentType} « ${doc.name} » : ${this.OWNERSHIP_LEVEL_NAMES[perm]} → ${affected.join(', ')}`,
+        ownership: newOwnership,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error setting document ownership:`, error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
   // Private storage for tracking roll button processing states
   private rollButtonProcessingStates: Map<string, boolean> = new Map();
 
