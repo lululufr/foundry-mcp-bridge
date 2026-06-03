@@ -546,6 +546,33 @@ Hooks.once('ready', async () => {
           return;
         }
 
+        // Handle loot-tile resolution requests from players (GM only). Players cannot modify
+        // scene Tiles, so after picking up a prop they ask the GM to either delete the tile or
+        // swap a chest to its opened sprite. (objets-de-scene skill / loot pickup feature.)
+        if (data.type === 'requestTileResolve' && data.sceneId && data.tileId) {
+          if (game.user?.isGM) {
+            try {
+              const scene = (game.scenes as any)?.get(data.sceneId);
+              if (scene) {
+                if (data.action === 'open' && data.openSrc) {
+                  await scene.updateEmbeddedDocuments('Tile', [
+                    {
+                      _id: data.tileId,
+                      'texture.src': data.openSrc,
+                      [`flags.${MODULE_ID}.looted`]: true,
+                    },
+                  ]);
+                } else {
+                  await scene.deleteEmbeddedDocuments('Tile', [data.tileId]);
+                }
+              }
+            } catch (error) {
+              console.error(`[${MODULE_ID}] Failed to resolve loot tile:`, error);
+            }
+          }
+          return;
+        }
+
         // Handle roll state save requests (GM only) - LEGACY
         if (data.type === 'requestRollStateSave' && data.buttonId && data.rollState) {
           // Only GM can save to world settings
@@ -641,6 +668,163 @@ Hooks.once('ready', () => {
     console.error(`[${MODULE_ID}] Failed to install passage-note handler:`, error);
   }
 });
+
+// Loot tiles: scene props placed by the `objets-de-scene` skill carry a `loot` flag. Make those
+// tiles clickable for EVERYONE — players included. The Tiles layer is GM-only in Foundry, so we
+// wire PIXI interaction directly on the placeable/mesh rather than relying on the layer. On click
+// the linked dnd5e item(s) are granted to the acting character (controlled token, else the user's
+// assigned character) and the tile is resolved (deleted, or a chest swapped to its opened sprite).
+// Mirrors the passage-pin approach above; runs for all users (separate from the GM-only onReady).
+Hooks.on('drawTile', (tile: any) => {
+  try {
+    bindLootTile(tile);
+  } catch (err) {
+    console.warn(`[${MODULE_ID}] Failed to bind loot tile:`, err);
+  }
+});
+
+/**
+ * Make a single loot tile interactive and attach its pickup handler. No-op for non-loot tiles,
+ * already-looted chests, or tiles already bound (drawTile can fire repeatedly).
+ */
+function bindLootTile(tile: any): void {
+  const f = tile?.document?.flags?.[MODULE_ID];
+  if (!f?.loot || f.looted) return; // only our props; opened chests stay inert
+  if (tile.__jdrLootBound) return;
+  tile.__jdrLootBound = true;
+
+  // Prefer the textured mesh (its bounds match the visible sprite); fall back to the container.
+  const clickTarget = tile.mesh ?? tile;
+  for (const t of [clickTarget, tile]) {
+    try {
+      t.eventMode = 'static'; // PIXI v7+
+      t.interactive = true; // legacy fallback
+      t.cursor = 'pointer';
+    } catch (_e) {
+      /* ignore */
+    }
+  }
+
+  const onTap = (event: any) => {
+    try {
+      event?.stopPropagation?.();
+    } catch (_e) {
+      /* ignore */
+    }
+    handleLootPickup(tile).catch((err: any) =>
+      console.error(`[${MODULE_ID}] Loot pickup failed:`, err)
+    );
+  };
+  try {
+    clickTarget.removeListener?.('pointertap', onTap);
+  } catch (_e) {
+    /* ignore */
+  }
+  clickTarget.on?.('pointertap', onTap);
+}
+
+/**
+ * Grant the loot tile's linked item(s) to the acting character, post a chat line, then resolve
+ * the tile. Handles single props, decorative props (no item), and chests (multiple contents).
+ */
+async function handleLootPickup(tile: any): Promise<void> {
+  const doc = tile?.document;
+  const f = doc?.flags?.[MODULE_ID];
+  if (!f?.loot || f.looted) return;
+
+  // Acting character: the controlled token first, else the user's assigned character.
+  const canvasRef: any = (globalThis as any).canvas;
+  const actor: any = canvasRef?.tokens?.controlled?.[0]?.actor ?? (game.user as any)?.character ?? null;
+  if (!actor) {
+    ui.notifications?.warn(
+      'Sélectionne d’abord ton personnage (clique ton token), puis ramasse l’objet.'
+    );
+    return;
+  }
+
+  // Items to grant: chest contents, or a single linked item, or nothing (pure decor).
+  const wanted: Array<{ uuid: string; name?: string; qty: number }> = [];
+  if (Array.isArray(f.contents) && f.contents.length) {
+    for (const c of f.contents) {
+      if (c?.uuid) wanted.push({ uuid: c.uuid, name: c.name, qty: Math.max(1, Number(c.quantity) || 1) });
+    }
+  } else if (f.lootItemUuid) {
+    wanted.push({ uuid: f.lootItemUuid, name: f.lootItemName, qty: 1 });
+  }
+  const isChest = Array.isArray(f.contents) && f.contents.length > 0;
+
+  const grantedNames: string[] = [];
+  if (wanted.length) {
+    const fromUuidFn: any = (globalThis as any).fromUuid;
+    const toCreate: any[] = [];
+    for (const w of wanted) {
+      try {
+        const src = fromUuidFn ? await fromUuidFn(w.uuid) : null;
+        if (!src) {
+          console.warn(`[${MODULE_ID}] Loot item not found: ${w.uuid}`);
+          continue;
+        }
+        const obj = src.toObject();
+        if (obj.system && 'quantity' in obj.system && w.qty > 1) obj.system.quantity = w.qty;
+        toCreate.push(obj);
+        grantedNames.push(w.name || obj.name);
+      } catch (err) {
+        console.warn(`[${MODULE_ID}] Failed to resolve loot item ${w.uuid}:`, err);
+      }
+    }
+    // If items were expected but none could be resolved, leave the tile so nothing is lost.
+    if (toCreate.length === 0) {
+      ui.notifications?.warn('Impossible de récupérer l’objet (introuvable). Préviens le MJ.');
+      return;
+    }
+    await actor.createEmbeddedDocuments('Item', toCreate);
+  }
+
+  // Chat feedback.
+  const who = actor.name;
+  let content: string;
+  if (grantedNames.length) {
+    content = isChest
+      ? `<strong>${who}</strong> ouvre un coffre et y trouve : ${grantedNames.join(', ')}.`
+      : `<strong>${who}</strong> ramasse <em>${grantedNames[0]}</em>.`;
+  } else {
+    content = `<strong>${who}</strong> ramasse ${f.label || 'un objet'}… pas très utile.`;
+  }
+  try {
+    await ChatMessage.create({ content, speaker: { alias: who } });
+  } catch (_e) {
+    /* ignore chat failures */
+  }
+
+  // Resolve the tile: a chest with an opened sprite is swapped + marked looted; everything else
+  // is deleted. Players lack scene-write permission, so they delegate to the GM over the socket.
+  const action = isChest && f.openSrc ? 'open' : 'delete';
+  if (game.user?.isGM) {
+    try {
+      if (action === 'open') {
+        await doc.update({ 'texture.src': f.openSrc, [`flags.${MODULE_ID}.looted`]: true });
+      } else {
+        await doc.delete();
+      }
+    } catch (err) {
+      console.error(`[${MODULE_ID}] GM tile resolve failed:`, err);
+    }
+  } else {
+    const gm = (game.users as any)?.find((u: any) => u.isGM && u.active);
+    if (!gm) {
+      ui.notifications?.warn('Aucun MJ en ligne pour retirer l’objet de la scène.');
+      return;
+    }
+    game.socket?.emit('module.jdr-mcp-bridge', {
+      type: 'requestTileResolve',
+      action,
+      sceneId: doc.parent?.id,
+      tileId: doc.id,
+      openSrc: f.openSrc ?? null,
+      fromUserId: game.user?.id,
+    });
+  }
+}
 
 // Handle settings menu close to check for changes
 Hooks.on('closeSettingsConfig', () => {

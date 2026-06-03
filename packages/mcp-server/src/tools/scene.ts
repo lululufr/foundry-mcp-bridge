@@ -222,11 +222,36 @@ export class SceneTools {
                   lootItemUuid: {
                     type: 'string',
                     description:
-                      'Optional dnd5e compendium item uuid to link (from search-compendium), recorded as a flag so the GM can grant it when a player picks the prop up.',
+                      'Optional dnd5e compendium item uuid to link (from search-compendium). When a player clicks the prop, this item is added to their character and the tile is removed.',
                   },
                   lootItemName: {
                     type: 'string',
                     description: 'Optional linked item display name (e.g. "Torch").',
+                  },
+                  openImagePath: {
+                    type: 'string',
+                    description:
+                      'Chest only: absolute path to the "opened chest" image. When set with contents, opening the chest swaps the tile to this sprite instead of deleting it.',
+                  },
+                  contents: {
+                    type: 'array',
+                    description:
+                      'Chest only: list of dnd5e items the chest holds. On open, all are granted to the player at once. Use instead of lootItemUuid for a multi-item container.',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        uuid: {
+                          type: 'string',
+                          description: 'dnd5e compendium item uuid (from search-compendium).',
+                        },
+                        name: { type: 'string', description: 'Optional item display name.' },
+                        quantity: {
+                          type: 'number',
+                          description: 'Optional quantity (default 1).',
+                        },
+                      },
+                      required: ['uuid'],
+                    },
                   },
                 },
                 required: ['imagePath', 'x', 'y'],
@@ -477,6 +502,16 @@ export class SceneTools {
       label: z.string().optional(),
       lootItemUuid: z.string().optional(),
       lootItemName: z.string().optional(),
+      openImagePath: z.string().optional(),
+      contents: z
+        .array(
+          z.object({
+            uuid: z.string(),
+            name: z.string().optional(),
+            quantity: z.number().optional(),
+          })
+        )
+        .optional(),
     });
     const schema = z.object({
       sceneName: z.string().optional(),
@@ -488,33 +523,40 @@ export class SceneTools {
 
     // Upload each prop image (deduped by path) and build the tile payloads.
     const uploadedByPath = new Map<string, string>();
+    // Upload a local image once (cached by absolute path) and return its Foundry web path.
+    const uploadImage = async (absPath: string): Promise<string> => {
+      const cached = uploadedByPath.get(absPath);
+      if (cached) return cached;
+      let imageBuffer: Buffer;
+      try {
+        imageBuffer = await readFile(absPath);
+      } catch (error) {
+        throw new Error(
+          `Cannot read prop image "${absPath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+      const filename = basename(absPath);
+      const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
+        filename,
+        imageData: imageBuffer.toString('base64'),
+        subdir: 'scene-props',
+      });
+      if (!uploadResult?.success) {
+        throw new Error(
+          `Failed to upload prop "${filename}" to Foundry: ${uploadResult?.error || 'unknown error'}`
+        );
+      }
+      const webPath = uploadResult.path as string;
+      uploadedByPath.set(absPath, webPath);
+      this.logger.info('Prop image uploaded to Foundry', { webPath });
+      return webPath;
+    };
+
     const tiles: any[] = [];
     for (const prop of props) {
-      let webPath = uploadedByPath.get(prop.imagePath);
-      if (!webPath) {
-        let imageBuffer: Buffer;
-        try {
-          imageBuffer = await readFile(prop.imagePath);
-        } catch (error) {
-          throw new Error(
-            `Cannot read prop image "${prop.imagePath}": ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
-        }
-        const filename = basename(prop.imagePath);
-        const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
-          filename,
-          imageData: imageBuffer.toString('base64'),
-          subdir: 'scene-props',
-        });
-        if (!uploadResult?.success) {
-          throw new Error(
-            `Failed to upload prop "${filename}" to Foundry: ${uploadResult?.error || 'unknown error'}`
-          );
-        }
-        webPath = uploadResult.path as string;
-        uploadedByPath.set(prop.imagePath, webPath);
-        this.logger.info('Prop image uploaded to Foundry', { webPath });
-      }
+      const webPath = await uploadImage(prop.imagePath);
+      // Chests: upload the "opened" sprite too (if any) and keep contents for the module flag.
+      const openSrc = prop.openImagePath ? await uploadImage(prop.openImagePath) : undefined;
       tiles.push({
         src: webPath,
         x: prop.x,
@@ -525,6 +567,8 @@ export class SceneTools {
         label: prop.label,
         lootItemUuid: prop.lootItemUuid,
         lootItemName: prop.lootItemName,
+        openSrc,
+        contents: prop.contents,
       });
     }
 

@@ -7118,6 +7118,8 @@ export class FoundryDataAccess {
       label?: string;
       lootItemUuid?: string;
       lootItemName?: string;
+      openSrc?: string;
+      contents?: Array<{ uuid: string; name?: string; quantity?: number }>;
     }>;
   }): Promise<any> {
     this.validateFoundryState();
@@ -7158,13 +7160,25 @@ export class FoundryDataAccess {
       }
       const w = Math.max(1, Math.round(Number(t.width) || 100));
       const h = Math.max(1, Math.round(Number(t.height) || 100));
+      const contents = Array.isArray(t.contents)
+        ? t.contents.filter(c => c && c.uuid).map(c => ({
+            uuid: c.uuid,
+            name: c.name ?? null,
+            quantity: Math.max(1, Number(c.quantity) || 1),
+          }))
+        : [];
+      const isContainer = contents.length > 0;
       const flags: any = {};
-      if (t.lootItemUuid || t.lootItemName || t.label) {
+      if (t.lootItemUuid || t.lootItemName || t.label || isContainer) {
         flags[this.moduleId] = {
           loot: true,
           lootItemUuid: t.lootItemUuid ?? null,
           lootItemName: t.lootItemName ?? null,
           label: t.label ?? t.lootItemName ?? null,
+          // Chest support: a container tile holds several items and may carry an "opened" sprite.
+          container: isContainer,
+          contents: isContainer ? contents : null,
+          openSrc: t.openSrc ?? null,
         };
       }
       // Foundry v13/v14: Tile texture lives at texture.src (legacy "img" was migrated).
