@@ -7597,7 +7597,9 @@ export class FoundryDataAccess {
           c: w.c,
           move: w.movement ?? 20,
           sight: w.sight ?? 20,
-          light: w.sight ?? 20,
+          // Block LIGHT wherever movement is blocked (solid walls, windows AND closed doors).
+          // Mapping light to `sight` let windows (sight:0, see-through) leak light → light=movement.
+          light: w.movement ?? 20,
           sound: w.movement ?? 20,
           dir: w.direction ?? 0,
           door: w.door ?? 0,
