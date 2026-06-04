@@ -7510,7 +7510,11 @@ export class FoundryDataAccess {
       elevationBottom: number;
       elevationTop: number;
       walls?: Array<any>;
+      // Phase B: walkable surface (defineSurface) — pixel rectangles covering the floor footprint.
+      footprint?: Array<{ x: number; y: number; w: number; h: number }>;
     }>;
+    // Phase B: stairs (changeLevel) linking two floors (indices into `levels`).
+    stairs?: Array<{ x: number; y: number; fromFloorIndex: number; toFloorIndex: number }>;
   }): Promise<any> {
     this.validateFoundryState();
     const g = globalThis as any;
@@ -7605,11 +7609,80 @@ export class FoundryDataAccess {
     });
     if (wallsData.length) await scene.createEmbeddedDocuments('Wall', wallsData);
 
+    // ---- Phase B: REGIONS (v14 Scene Levels) — walkable surfaces + stairs ----
+    // Structure calquée sur le module de démo officiel « Restored Keep » (ground truth).
+    const allLevelIds = createdLevels.map((cl: any) => cl.id).filter(Boolean);
+    const regionsData: any[] = [];
+
+    // Surface marchable par étage : région à élévation PLATE (bottom==top au plancher), forme =
+    // rectangles de l'empreinte, visible sur tous les niveaux du bâtiment (groupe connecté).
+    levelsIn.forEach((l, i) => {
+      const fp = Array.isArray(l.footprint) ? l.footprint : [];
+      if (!fp.length) return;
+      const bottom = Number(l.elevationBottom ?? i * 10);
+      regionsData.push({
+        name: `Surface — ${l.name || `Niveau ${i}`}`,
+        levels: allLevelIds,
+        elevation: { bottom, top: bottom, topInclusive: false },
+        shapes: fp.map((r) => ({
+          type: 'rectangle',
+          x: Math.round(r.x), y: Math.round(r.y),
+          width: Math.round(r.w), height: Math.round(r.h),
+          hole: false,
+        })),
+        behaviors: [
+          {
+            type: 'defineSurface',
+            system: { placement: 'bottom', light: true, move: true, sight: true, sound: true, occlusion: false, exposure: true, culling: false },
+          },
+        ],
+      });
+    });
+
+    // Escaliers : petite région (1 carré) à la position de l'escalier, reliant 2 niveaux. Élévation
+    // enjambe le palier (bottom du bas → top du bas +5). movementActions vide = vrai escalier (on
+    // change de niveau en marchant ; ['climb'] serait pour une échelle).
+    for (const s of Array.isArray(data.stairs) ? data.stairs : []) {
+      const fi = s.fromFloorIndex, ti = s.toFloorIndex;
+      const fId = levelIdOf(fi), tId = levelIdOf(ti);
+      if (!fId || !tId) continue;
+      const fb = Number(levelsIn[fi]?.elevationBottom ?? fi * 10);
+      const tb = Number(levelsIn[ti]?.elevationBottom ?? ti * 10);
+      const lowIsFrom = fb <= tb;
+      const lowerBottom = lowIsFrom ? fb : tb;
+      const lowerTop = Number((lowIsFrom ? levelsIn[fi] : levelsIn[ti])?.elevationTop ?? lowerBottom + 10);
+      const half = Math.round(gridSize / 2);
+      regionsData.push({
+        name: `Escalier ${levelsIn[fi]?.name || fi} ⇄ ${levelsIn[ti]?.name || ti}`,
+        levels: [fId, tId],
+        elevation: { bottom: lowerBottom, top: lowerTop + 5, topInclusive: false },
+        shapes: [
+          {
+            type: 'rectangle',
+            x: Math.round(s.x) - half, y: Math.round(s.y) - half,
+            width: gridSize, height: gridSize, hole: false,
+          },
+        ],
+        behaviors: [{ type: 'changeLevel', system: { movementActions: [] } }],
+      });
+    }
+
+    let regionsCreated = 0;
+    if (regionsData.length) {
+      try {
+        const created = await scene.createEmbeddedDocuments('Region', regionsData);
+        regionsCreated = created?.length ?? 0;
+      } catch (err) {
+        // Non-fatal: levels + walls already exist; surfaces/stairs are an enhancement.
+        this.auditLog('createSceneLevels.regions', { error: err instanceof Error ? err.message : String(err) }, 'failure');
+      }
+    }
+
     if (data.active !== false) await scene.activate();
 
     this.auditLog(
       'createSceneLevels',
-      { scene: scene.id, levels: createdLevels.length, walls: wallsData.length },
+      { scene: scene.id, levels: createdLevels.length, walls: wallsData.length, regions: regionsCreated },
       'success'
     );
 
@@ -7625,6 +7698,7 @@ export class FoundryDataAccess {
         wallCount: Array.isArray(levelsIn[i]?.walls) ? levelsIn[i]!.walls!.length : 0,
       })),
       totalWalls: wallsData.length,
+      regionsCreated,
     };
   }
 

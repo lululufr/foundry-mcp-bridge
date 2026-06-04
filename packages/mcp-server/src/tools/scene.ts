@@ -130,8 +130,36 @@ export class SceneTools {
                     type: 'number',
                     description: 'Top of this level\'s elevation band, in scene units/ft (meta.floors[].elevation.top).',
                   },
+                  footprint: {
+                    type: 'array',
+                    description: 'Phase B (optional): walkable surface rectangles (image px) for this floor — from meta.floors[].footprint. Creates a defineSurface region so tokens stand on the floor.',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        x: { type: 'number' },
+                        y: { type: 'number' },
+                        w: { type: 'number' },
+                        h: { type: 'number' },
+                      },
+                      required: ['x', 'y', 'w', 'h'],
+                    },
+                  },
                 },
                 required: ['imagePath', 'name', 'elevationBottom', 'elevationTop'],
+              },
+            },
+            stairs: {
+              type: 'array',
+              description: 'Phase B (optional): stairs linking floors. Each creates a changeLevel region so a token walking onto it goes up/down a level. Dedupe cross-floor pairs before passing.',
+              items: {
+                type: 'object',
+                properties: {
+                  x: { type: 'number', description: 'Stair center X in image px (meta.floors[].stairs[].x).' },
+                  y: { type: 'number', description: 'Stair center Y in image px.' },
+                  fromFloorIndex: { type: 'number', description: 'Index into floors[] of one connected floor.' },
+                  toFloorIndex: { type: 'number', description: 'Index into floors[] of the other connected floor.' },
+                },
+                required: ['x', 'y', 'fromFloorIndex', 'toFloorIndex'],
               },
             },
             gridSize: {
@@ -682,15 +710,25 @@ export class SceneTools {
       name: z.string(),
       elevationBottom: z.number(),
       elevationTop: z.number(),
+      footprint: z
+        .array(z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }))
+        .optional(),
+    });
+    const stairSchema = z.object({
+      x: z.number(),
+      y: z.number(),
+      fromFloorIndex: z.number(),
+      toFloorIndex: z.number(),
     });
     const schema = z.object({
       sceneName: z.string(),
       floors: z.array(floorSchema).min(1),
+      stairs: z.array(stairSchema).optional(),
       gridSize: z.number().default(100),
       gridEnabled: z.boolean().default(true),
       folderName: z.string().optional(),
     });
-    const { sceneName, floors, gridSize, gridEnabled, folderName } = schema.parse(args);
+    const { sceneName, floors, stairs, gridSize, gridEnabled, folderName } = schema.parse(args);
 
     this.logger.info('Importing multi-level scene', { sceneName, floors: floors.length });
 
@@ -743,6 +781,7 @@ export class SceneTools {
         elevationBottom: f.elevationBottom,
         elevationTop: f.elevationTop,
         walls,
+        footprint: f.footprint, // Phase B: walkable surface shape (optional)
       });
     }
 
@@ -754,6 +793,7 @@ export class SceneTools {
       width,
       height,
       levels,
+      stairs: stairs || undefined, // Phase B: changeLevel regions (optional)
       active: true,
     });
     if (!result?.success) {
@@ -762,12 +802,13 @@ export class SceneTools {
 
     return {
       success: true,
-      message: `Multi-level scene "${sceneName}" created (${result.levelCount} levels, ${result.totalWalls} walls).`,
+      message: `Multi-level scene "${sceneName}" created (${result.levelCount} levels, ${result.totalWalls} walls, ${result.regionsCreated ?? 0} regions).`,
       sceneId: result.sceneId,
       sceneName: result.sceneName,
       levelCount: result.levelCount,
       levels: result.levels,
       totalWalls: result.totalWalls,
+      regionsCreated: result.regionsCreated ?? 0,
       dimensions: { width, height },
     };
   }
