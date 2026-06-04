@@ -1536,6 +1536,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'import-scene-levels':
+                  result = await sceneTools.handleImportSceneLevels(args);
+
+                  break;
+
                 case 'create-scene-note':
                   result = await sceneTools.handleCreateSceneNote(args);
 

@@ -50,6 +50,8 @@ export class QueryHandlers {
       this.handleDeleteSceneNotes.bind(this);
     CONFIG.queries[`${modulePrefix}.create-scene-tiles`] =
       this.handleCreateSceneTiles.bind(this);
+    CONFIG.queries[`${modulePrefix}.create-scene-levels`] =
+      this.handleCreateSceneLevels.bind(this);
     CONFIG.queries[`${modulePrefix}.set-scene-ambiance`] =
       this.handleSetSceneAmbiance.bind(this);
     CONFIG.queries[`${modulePrefix}.sync-codex`] = this.handleSyncCodex.bind(this);
@@ -1163,6 +1165,33 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to create scene tiles: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle creation of ONE multi-LEVEL scene (Foundry v14 native Scene Levels): all floors stacked
+   * on a single scene as `levels[]` (image + elevation band per floor) with walls bound per level.
+   * Powers the maison multi-étages pipeline. See memory foundry-v14-scene-levels.
+   */
+  private async handleCreateSceneLevels(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data || !Array.isArray(data.levels) || data.levels.length === 0) {
+        throw new Error('levels array is required and must not be empty');
+      }
+
+      return await this.dataAccess.createSceneLevels(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to create scene levels: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

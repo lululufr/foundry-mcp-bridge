@@ -7491,6 +7491,144 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Create ONE multi-LEVEL scene (Foundry v14 native Scene Levels): the scene's `levels[]` stacks
+   * one background image per floor at its elevation band, and walls are bound to their level via
+   * `wall.levels`. Powers the maison multi-étages pipeline (tous les étages sur une seule scène).
+   * Voir mémoire foundry-v14-scene-levels. GM-only (validated by the query handler).
+   */
+  async createSceneLevels(data: {
+    sceneName: string;
+    folderName?: string;
+    gridSize?: number;
+    gridEnabled?: boolean;
+    width: number;
+    height: number;
+    active?: boolean;
+    levels: Array<{
+      name: string;
+      src: string;
+      elevationBottom: number;
+      elevationTop: number;
+      walls?: Array<any>;
+    }>;
+  }): Promise<any> {
+    this.validateFoundryState();
+    const g = globalThis as any;
+
+    const levelsIn = Array.isArray(data.levels) ? data.levels : [];
+    if (!data.sceneName) throw new Error('createSceneLevels requires "sceneName"');
+    if (levelsIn.length === 0)
+      throw new Error('createSceneLevels requires a non-empty "levels" array');
+
+    // Scene folder (created if missing), e.g. "ACT I".
+    const folderName = data.folderName?.trim() || 'AI Generated Maps';
+    let folderId: string | null = null;
+    const existingFolder = (game.folders as any)?.find(
+      (f: any) => f.type === 'Scene' && f.name === folderName
+    );
+    if (existingFolder) folderId = existingFolder.id;
+    else {
+      const folder = await (g.Folder as any).create({ name: folderName, type: 'Scene', sorting: 'a' });
+      folderId = folder?.id ?? null;
+    }
+
+    const gridEnabled = data.gridEnabled !== false;
+    const gridSize = Math.max(1, Number(data.gridSize) || 100);
+    const width = Math.round(Number(data.width) || 1000);
+    const height = Math.round(Number(data.height) || 1000);
+
+    // Pre-generate a Level _id per floor so walls can bind to their level immediately. If Foundry
+    // does not keep our ids, we fall back to creation order below (levels keep their input order).
+    const levelDocs = levelsIn.map((l, i) => ({
+      _id: (g.foundry?.utils?.randomID?.() as string) || undefined,
+      name: l.name || `Niveau ${i}`,
+      sort: i,
+      elevation: {
+        bottom: Number(l.elevationBottom ?? i * 10),
+        top: Number(l.elevationTop ?? (i + 1) * 10),
+      },
+      background: { src: l.src },
+    }));
+
+    // Background image lives on each Level (not the scene root) in the Scene Levels model.
+    const sceneData: any = {
+      name: data.sceneName.trim(),
+      ...(folderId ? { folder: folderId } : {}),
+      width,
+      height,
+      padding: 0,
+      background: { src: '' },
+      levels: levelDocs,
+      initial: { x: Math.round(width / 2), y: Math.round(height / 2), scale: 0.3 },
+      backgroundColor: '#000000',
+      grid: { type: gridEnabled ? 1 : 0, size: gridSize, color: '#000000', alpha: 0.2, distance: 5, units: 'ft' },
+      tokenVision: gridEnabled,
+      fogExploration: gridEnabled,
+      globalLight: !gridEnabled,
+      darkness: 0,
+      navigation: true,
+      active: false,
+    };
+
+    const scene = await (g.Scene as any).create(sceneData, { keepEmbeddedIds: true });
+    if (!scene) throw new Error('Scene.create returned null');
+
+    // Map each input level (by our pre-set id, else by creation order) to its created Level id.
+    const createdLevels: any[] = (scene.levels as any)?.contents ?? [];
+    const levelIdOf = (i: number): string | undefined => {
+      const want = levelDocs[i]?._id;
+      const byId = want ? createdLevels.find((cl: any) => cl.id === want) : null;
+      return byId?.id || createdLevels[i]?.id;
+    };
+
+    // Build walls per level. Map our logical fields (movement/sight/door/doorState/direction) to
+    // v14 wall fields (move/sight/light/sound/door/ds/dir) and bind each wall to its level.
+    const wallsData: any[] = [];
+    levelsIn.forEach((l, i) => {
+      const lid = levelIdOf(i);
+      for (const w of Array.isArray(l.walls) ? l.walls : []) {
+        if (!w?.c || !Array.isArray(w.c) || w.c.length !== 4) continue;
+        if (!w.c.every((n: any) => typeof n === 'number' && !isNaN(n))) continue;
+        wallsData.push({
+          c: w.c,
+          move: w.movement ?? 20,
+          sight: w.sight ?? 20,
+          light: w.sight ?? 20,
+          sound: w.movement ?? 20,
+          dir: w.direction ?? 0,
+          door: w.door ?? 0,
+          ds: w.doorState ?? 0,
+          doorSound: '',
+          ...(lid ? { levels: [lid] } : {}),
+        });
+      }
+    });
+    if (wallsData.length) await scene.createEmbeddedDocuments('Wall', wallsData);
+
+    if (data.active !== false) await scene.activate();
+
+    this.auditLog(
+      'createSceneLevels',
+      { scene: scene.id, levels: createdLevels.length, walls: wallsData.length },
+      'success'
+    );
+
+    return {
+      success: true,
+      sceneId: scene.id,
+      sceneName: scene.name,
+      levelCount: createdLevels.length,
+      levels: createdLevels.map((cl: any, i: number) => ({
+        id: cl.id,
+        name: cl.name,
+        elevation: cl.elevation,
+        wallCount: Array.isArray(levelsIn[i]?.walls) ? levelsIn[i]!.walls!.length : 0,
+      })),
+      totalWalls: wallsData.length,
+    };
+  }
+
+  /**
    * Delete map Notes from a scene, by id list or all of them. Lets pins be re-placed/edited
    * without re-importing the whole scene.
    */

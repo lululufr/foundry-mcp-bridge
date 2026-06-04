@@ -92,6 +92,67 @@ export class SceneTools {
         },
       },
       {
+        name: 'import-scene-levels',
+        description:
+          'Create ONE multi-level scene (Foundry v14 native Scene Levels) from a stack of floor images: each floor becomes a Level (image + elevation band + name) on a single scene, with its walls bound to that level. Use for the Watabou "maison" multi-étages pipeline — feed it meta.floors[] (per-floor PNG + .walls.json from gen.mjs). Floors must share dimensions/grid (the generator stacks them pixel-aligned).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sceneName: {
+              type: 'string',
+              description: 'Name of the single multi-level scene to create (e.g. "ACT I — Auberge").',
+            },
+            floors: {
+              type: 'array',
+              minItems: 1,
+              description:
+                'Floors bottom-to-top (e.g. sous-sol, RdC, étages). Each becomes a Level stacked by elevation.',
+              items: {
+                type: 'object',
+                properties: {
+                  imagePath: {
+                    type: 'string',
+                    description: 'Absolute path to this floor\'s PNG (meta.floors[].png).',
+                  },
+                  wallsPath: {
+                    type: 'string',
+                    description: 'Optional absolute path to this floor\'s .walls.json (meta.floors[].walls).',
+                  },
+                  name: {
+                    type: 'string',
+                    description: 'Level name shown in the Levels UI (e.g. "RdC", "Étage 1", "Sous-sol").',
+                  },
+                  elevationBottom: {
+                    type: 'number',
+                    description: 'Bottom of this level\'s elevation band, in scene units/ft (meta.floors[].elevation.bottom).',
+                  },
+                  elevationTop: {
+                    type: 'number',
+                    description: 'Top of this level\'s elevation band, in scene units/ft (meta.floors[].elevation.top).',
+                  },
+                },
+                required: ['imagePath', 'name', 'elevationBottom', 'elevationTop'],
+              },
+            },
+            gridSize: {
+              type: 'number',
+              description: 'Grid square size in pixels (meta.gridSize). Default: 100.',
+              default: 100,
+            },
+            gridEnabled: {
+              type: 'boolean',
+              description: 'Show a square tactical grid (true for battlemaps). Default: true.',
+              default: true,
+            },
+            folderName: {
+              type: 'string',
+              description: 'Optional Scene folder name (created if missing, e.g. "ACT I"). Defaults to "AI Generated Maps".',
+            },
+          },
+          required: ['sceneName', 'floors'],
+        },
+      },
+      {
         name: 'create-scene-note',
         description:
           'Place map Notes (journal pins / "lieux-dits") on a scene to mark points of interest. Each note sits at image-pixel coordinates and can link to a lore JournalEntry (by Codex slug) so clicking the pin opens it. Use this for city/village overview maps instead of creature tokens. Defaults to the active scene.',
@@ -604,6 +665,110 @@ export class SceneTools {
       dimensions: { width, height },
       gridEnabled,
       wallsCreated: walls.length,
+    };
+  }
+
+  /**
+   * Create ONE multi-LEVEL scene from a stack of floor images (Foundry v14 native Scene Levels).
+   * Each floor becomes a Level (image + elevation band + name) on a single scene, with its walls
+   * bound to that level. Powers the Watabou "maison" multi-étages pipeline: feed it the per-floor
+   * PNG + .walls.json from gen.mjs (meta.floors[]). Floors must share the same dimensions/grid
+   * (they do — the generator stacks them pixel-aligned).
+   */
+  async handleImportSceneLevels(args: any): Promise<any> {
+    const floorSchema = z.object({
+      imagePath: z.string(),
+      wallsPath: z.string().optional(),
+      name: z.string(),
+      elevationBottom: z.number(),
+      elevationTop: z.number(),
+    });
+    const schema = z.object({
+      sceneName: z.string(),
+      floors: z.array(floorSchema).min(1),
+      gridSize: z.number().default(100),
+      gridEnabled: z.boolean().default(true),
+      folderName: z.string().optional(),
+    });
+    const { sceneName, floors, gridSize, gridEnabled, folderName } = schema.parse(args);
+
+    this.logger.info('Importing multi-level scene', { sceneName, floors: floors.length });
+
+    let width = 0;
+    let height = 0;
+    const levels: any[] = [];
+    for (const f of floors) {
+      // Walls for this floor (logical .walls.json from the maison generator).
+      let walls: any[] = [];
+      if (f.wallsPath) {
+        try {
+          const parsed = JSON.parse(await readFile(f.wallsPath, 'utf8'));
+          if (Array.isArray(parsed)) walls = parsed;
+          else throw new Error('walls JSON must be an array');
+        } catch (error) {
+          throw new Error(
+            `Cannot read walls file "${f.wallsPath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+        }
+      }
+
+      let imageBuffer: Buffer;
+      try {
+        imageBuffer = await readFile(f.imagePath);
+      } catch (error) {
+        throw new Error(
+          `Cannot read image file "${f.imagePath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+      const dims = this.readImageDimensions(imageBuffer);
+      if (!width) {
+        width = dims.width;
+        height = dims.height;
+      }
+
+      const filename = basename(f.imagePath);
+      const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
+        filename,
+        imageData: imageBuffer.toString('base64'),
+      });
+      if (!uploadResult?.success) {
+        throw new Error(
+          `Failed to upload floor image "${filename}": ${uploadResult?.error || 'unknown error'}`
+        );
+      }
+      this.logger.info('Floor image uploaded', { filename, path: uploadResult.path });
+      levels.push({
+        name: f.name,
+        src: uploadResult.path,
+        elevationBottom: f.elevationBottom,
+        elevationTop: f.elevationTop,
+        walls,
+      });
+    }
+
+    const result = await this.foundryClient.query('jdr-mcp-bridge.create-scene-levels', {
+      sceneName: sceneName.trim(),
+      folderName: folderName?.trim() || undefined,
+      gridSize,
+      gridEnabled,
+      width,
+      height,
+      levels,
+      active: true,
+    });
+    if (!result?.success) {
+      throw new Error(`Failed to create multi-level scene: ${result?.error || 'unknown error'}`);
+    }
+
+    return {
+      success: true,
+      message: `Multi-level scene "${sceneName}" created (${result.levelCount} levels, ${result.totalWalls} walls).`,
+      sceneId: result.sceneId,
+      sceneName: result.sceneName,
+      levelCount: result.levelCount,
+      levels: result.levels,
+      totalWalls: result.totalWalls,
+      dimensions: { width, height },
     };
   }
 
