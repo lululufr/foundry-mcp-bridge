@@ -7801,6 +7801,10 @@ export class FoundryDataAccess {
       animationType?: string;
       animationSpeed?: number;
       animationIntensity?: number;
+      // v14 Scene Levels: bind a light to one floor so it only lights that level (otherwise an
+      // unbound light shines on every stacked floor). `level` = a Level name or id on the scene.
+      elevation?: number;
+      level?: string;
     }>;
     replaceLights?: boolean;
   }): Promise<any> {
@@ -7857,28 +7861,44 @@ export class FoundryDataAccess {
       }
     }
     if (lights.length > 0) {
-      const lightsData = lights.map((l) => ({
-        x: Math.round(l.x),
-        y: Math.round(l.y),
-        rotation: l.rotation ?? 0,
-        walls: true,
-        vision: false,
-        config: {
-          dim: l.dim ?? 40,
-          bright: l.bright ?? 20,
-          color: l.color ?? '#ffaa55',
-          alpha: typeof l.alpha === 'number' ? l.alpha : 0.5,
-          angle: l.angle ?? 360,
-          animation: l.animationType
-            ? {
-                type: l.animationType,
-                speed: l.animationSpeed ?? 3,
-                intensity: l.animationIntensity ?? 5,
-              }
-            : { type: null },
-        },
-        flags: { [this.moduleId]: { ambiance: true } },
-      }));
+      // Resolve a Level name/id (per light) to its id on this scene, to bind the light to one floor.
+      const sceneLevels: any[] = (scene.levels as any)?.contents ?? [];
+      const resolveLevel = (ref?: string): string | undefined => {
+        if (!ref) return undefined;
+        const byId = sceneLevels.find((lv: any) => lv.id === ref);
+        if (byId) return byId.id;
+        const byName = sceneLevels.find(
+          (lv: any) => (lv.name || '').toLowerCase() === ref.toLowerCase()
+        );
+        return byName?.id;
+      };
+      const lightsData = lights.map((l) => {
+        const levelId = resolveLevel(l.level);
+        return {
+          x: Math.round(l.x),
+          y: Math.round(l.y),
+          rotation: l.rotation ?? 0,
+          walls: true,
+          vision: false,
+          ...(typeof l.elevation === 'number' ? { elevation: l.elevation } : {}),
+          ...(levelId ? { levels: [levelId] } : {}),
+          config: {
+            dim: l.dim ?? 40,
+            bright: l.bright ?? 20,
+            color: l.color ?? '#ffaa55',
+            alpha: typeof l.alpha === 'number' ? l.alpha : 0.5,
+            angle: l.angle ?? 360,
+            animation: l.animationType
+              ? {
+                  type: l.animationType,
+                  speed: l.animationSpeed ?? 3,
+                  intensity: l.animationIntensity ?? 5,
+                }
+              : { type: null },
+          },
+          flags: { [this.moduleId]: { ambiance: true } },
+        };
+      });
       const created = await scene.createEmbeddedDocuments('AmbientLight', lightsData);
       createdLights = created.length;
     }

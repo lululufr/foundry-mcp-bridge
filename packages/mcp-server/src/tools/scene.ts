@@ -407,6 +407,14 @@ export class SceneTools {
                   },
                   animationSpeed: { type: 'number', description: 'Animation speed 1..10 (default 3).' },
                   animationIntensity: { type: 'number', description: 'Animation intensity 1..10 (default 5).' },
+                  level: {
+                    type: 'string',
+                    description: 'v14 Scene Levels: bind this light to one floor (Level name or id, e.g. "RdC"). Required on multi-level maison scenes so the light only illuminates that floor (an unbound light shines on every stacked level). Omit on single-level scenes.',
+                  },
+                  elevation: {
+                    type: 'number',
+                    description: 'Light elevation in scene units/ft (set to mid-floor, e.g. the floor band bottom + 5, when using `level`).',
+                  },
                 },
                 required: ['x', 'y'],
               },
@@ -435,6 +443,8 @@ export class SceneTools {
       animationType: z.string().optional(),
       animationSpeed: z.number().optional(),
       animationIntensity: z.number().optional(),
+      level: z.string().optional(),
+      elevation: z.number().optional(),
     });
     const schema = z.object({
       sceneName: z.string().optional(),
