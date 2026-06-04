@@ -105,6 +105,17 @@ export class TokenManipulationTools {
                   type: 'boolean',
                   description: 'Whether to lock the rotation',
                 },
+                sight: {
+                  type: 'object',
+                  description:
+                    'Token vision (v14). Set enabled:true so the token actually sees (required for dynamic walls/Scene Levels fog & occlusion). range 0 = use the actor\'s senses (dnd5e). Examples: {enabled:true} or {enabled:true,range:30,visionMode:"darkvision"}.',
+                  properties: {
+                    enabled: { type: 'boolean', description: 'Whether the token has vision.' },
+                    range: { type: 'number', description: 'Vision range in scene units (0 = rely on actor senses).' },
+                    angle: { type: 'number', description: 'Vision cone angle in degrees (360 = all around).' },
+                    visionMode: { type: 'string', description: 'Vision mode id, e.g. "basic", "darkvision".' },
+                  },
+                },
               },
             },
           },
@@ -237,6 +248,17 @@ export class TokenManipulationTools {
         name: z.string().optional(),
         elevation: z.number().optional(),
         lockRotation: z.boolean().optional(),
+        // Token vision (v14). Applied as-is by the module (token.update). enabled:true is required
+        // for dynamic walls / Scene Levels fog & occlusion to work for that token.
+        sight: z
+          .object({
+            enabled: z.boolean().optional(),
+            range: z.number().optional(),
+            angle: z.number().optional(),
+            visionMode: z.string().optional(),
+          })
+          .passthrough()
+          .optional(),
       }),
     });
 
