@@ -43,7 +43,7 @@ jobs:
       - name: Package module (dist + manifest + assets)
         run: |
           cd packages/foundry-module
-          zip -r ../../jdr-mcp-bridge.zip dist module.json styles lang
+          zip -r ../../jdr-mcp-bridge.zip dist module.json styles lang templates
           cd ../..
           ls -lh jdr-mcp-bridge.zip
 
