@@ -1,0 +1,100 @@
+<form class="eci-settings">
+  <section class="eci-block">
+    <h2 class="eci-title">Portail de création de personnage</h2>
+    <p class="eci-note">
+      Les joueurs remplissent leur fiche sur le portail web (service externe). Les soumissions
+      arrivent en file d'attente ; ce module les importe comme acteurs dnd5e dans le monde.
+      L'import s'effectue dans <strong>votre navigateur</strong> : gardez Foundry ouvert.
+    </p>
+  </section>
+
+  <hr class="eci-divider"/>
+
+  <section class="eci-block eci-settings-block">
+    <h3 class="eci-subtitle">Connexion au portail</h3>
+
+    <label class="eci-check">
+      <input type="checkbox" id="portal-enabled" name="portalEnabled" {{#if portalEnabled}}checked{{/if}} />
+      <span><strong>Activer le portail</strong> — autorise l'import automatique périodique.</span>
+    </label>
+
+    <div class="form-group">
+      <label for="portal-url"><strong>URL du portail</strong></label>
+      <input type="text" id="portal-url" name="portalBaseUrl" value="{{portalBaseUrl}}"
+             placeholder="https://creation.exemple.tld" />
+    </div>
+
+    <div class="form-group">
+      <label for="portal-token"><strong>Jeton d'administration</strong></label>
+      <input type="password" id="portal-token" name="portalAdminToken" value="{{portalAdminToken}}"
+             placeholder="ADMIN_TOKEN du portail" autocomplete="off" />
+    </div>
+
+    <div class="form-group">
+      <label for="portal-poll"><strong>Fréquence d'import (secondes)</strong></label>
+      <input type="number" id="portal-poll" name="portalPollIntervalSec" min="10" max="600"
+             value="{{portalPollIntervalSec}}" />
+      <p class="notes">Le module interroge le portail à cet intervalle quand il est activé.</p>
+    </div>
+  </section>
+
+  <hr class="eci-divider"/>
+
+  <section class="eci-block">
+    <h3 class="eci-subtitle">Catalogue SRD</h3>
+    <p class="eci-note">Publie les races / classes / historiques / sorts / objets du système vers le formulaire.</p>
+    <button type="button" class="eci-btn" id="portal-publish">
+      <i class="fas fa-upload"></i> Publier le catalogue SRD
+    </button>
+  </section>
+
+  <hr class="eci-divider"/>
+
+  <section class="eci-block">
+    <h3 class="eci-subtitle">Lien joueur (usage unique)</h3>
+    <div class="form-group">
+      <label for="portal-player-label"><strong>Nom du joueur (libellé)</strong></label>
+      <input type="text" id="portal-player-label" placeholder="ex. Aria / Lucas" />
+    </div>
+    <div class="form-group">
+      <label for="portal-user"><strong>Compte Foundry à lier (optionnel)</strong></label>
+      <select id="portal-user">
+        <option value="">— ne pas lier —</option>
+        {{#each users}}
+        <option value="{{this.name}}">{{this.name}}</option>
+        {{/each}}
+      </select>
+      <p class="notes">Si choisi, le personnage créé devient le perso par défaut de ce joueur (+ OWNER).</p>
+    </div>
+    <button type="button" class="eci-btn" id="portal-generate">
+      <i class="fas fa-link"></i> Générer le lien
+    </button>
+    <div class="form-group" style="margin-top:8px;">
+      <input type="text" id="portal-otp-url" readonly placeholder="Le lien apparaîtra ici" />
+      <button type="button" class="eci-btn" id="portal-copy-url">
+        <i class="fas fa-copy"></i> Copier
+      </button>
+    </div>
+  </section>
+
+  <hr class="eci-divider"/>
+
+  <section class="eci-block">
+    <h3 class="eci-subtitle">File d'attente</h3>
+    <div class="eci-controls">
+      <button type="button" class="eci-btn check" id="portal-refresh">
+        <i class="fas fa-sync"></i> Rafraîchir
+      </button>
+      <button type="button" class="eci-btn start" id="portal-import">
+        <i class="fas fa-download"></i> Importer maintenant
+      </button>
+    </div>
+    <p class="eci-note" id="portal-status">—</p>
+  </section>
+
+  <hr class="eci-divider"/>
+
+  <div class="form-footer">
+    <button type="submit" class="eci-btn"><i class="fas fa-save"></i> Enregistrer les réglages</button>
+  </div>
+</form>

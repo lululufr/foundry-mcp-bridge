@@ -8469,4 +8469,492 @@ export class FoundryDataAccess {
       );
     }
   }
+
+  // ===========================================================================
+  // CHARACTER PORTAL — questionnaire en ligne -> acteur dnd5e
+  //
+  // Le portail web (service autonome sur le VPS, voir tools/character-portal) met les
+  // soumissions des joueurs en file d'attente. Ces méthodes tournent dans le navigateur
+  // MJ : elles génèrent les liens OTP, publient le catalogue SRD, tirent la file et
+  // construisent l'acteur. Tout passe par fetch HTTPS vers le portail ; rien ne touche
+  // au lien WebRTC MCP. (Réservé au MJ — appelé depuis le menu de réglages / le poller.)
+  // ===========================================================================
+
+  /** Lit la configuration du portail depuis les réglages du module. */
+  private portalConfig(): { enabled: boolean; baseUrl: string; token: string } {
+    return {
+      enabled: !!game.settings.get(MODULE_ID, 'portalEnabled'),
+      baseUrl: String(game.settings.get(MODULE_ID, 'portalBaseUrl') || '').replace(/\/+$/, ''),
+      token: String(game.settings.get(MODULE_ID, 'portalAdminToken') || ''),
+    };
+  }
+
+  /** Appel authentifié vers une route /api/admin/* du portail. */
+  private async portalAdminFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const { baseUrl, token } = this.portalConfig();
+    if (!baseUrl) throw new Error('URL du portail non configurée (menu Portail).');
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      ...((init.headers as Record<string, string>) || {}),
+    };
+    if (init.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    const res = await fetch(baseUrl + path, { ...init, headers });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        detail = (await res.json())?.error || '';
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`Portail ${path} → HTTP ${res.status}${detail ? ` (${detail})` : ''}`);
+    }
+    return res;
+  }
+
+  /** Le MJ génère un lien OTP à usage unique pour un joueur. */
+  async portalIssueOtp(data: {
+    playerLabel?: string;
+    foundryUser?: string;
+    ttlDays?: number;
+  }): Promise<{ success: boolean; url?: string; token?: string; error?: string }> {
+    try {
+      const res = await this.portalAdminFetch('/api/admin/otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          playerLabel: data.playerLabel || null,
+          foundryUser: data.foundryUser || null,
+          ttlDays: data.ttlDays || undefined,
+        }),
+      });
+      const out = await res.json();
+      return { success: true, url: out.url, token: out.token };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /** Construit puis publie le catalogue SRD (options du formulaire) vers le portail. */
+  async portalPublishCatalog(): Promise<{ success: boolean; counts?: any; error?: string }> {
+    try {
+      const catalog = await this.buildPortalCatalog();
+      await this.portalAdminFetch('/api/admin/catalog', {
+        method: 'POST',
+        body: JSON.stringify(catalog),
+      });
+      const counts = {
+        races: catalog.races.length,
+        classes: catalog.classes.length,
+        subclasses: Object.values(catalog.subclassesByClass).reduce(
+          (n: number, a: any) => n + a.length,
+          0
+        ),
+        backgrounds: catalog.backgrounds.length,
+        spells: catalog.spells.length,
+        equipment: catalog.equipment.length,
+      };
+      return { success: true, counts };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Parcourt les packs d'Items et regroupe les entrées SRD par type. Agnostique des ids de
+   * pack (ne code rien en dur) : marche tant que les compendiums dnd5e sont présents.
+   */
+  async buildPortalCatalog(): Promise<{
+    abilities: string[];
+    alignments: string[];
+    races: any[];
+    classes: any[];
+    subclassesByClass: Record<string, any[]>;
+    backgrounds: any[];
+    spellsByClass: Record<string, any[]>;
+    spells: any[];
+    equipment: any[];
+  }> {
+    const races: any[] = [];
+    const classes: any[] = [];
+    const backgrounds: any[] = [];
+    const equipment: any[] = [];
+    const subclassesByClass: Record<string, any[]> = {};
+    const spells: any[] = [];
+
+    const EQUIP_TYPES = new Set([
+      'weapon',
+      'equipment',
+      'consumable',
+      'tool',
+      'loot',
+      'container',
+    ]);
+    const slug = (s: string) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+
+    // Le monde peut contenir DEUX jeux de règles : 2014 « DRS » (SRD 5.1) et 2024 (packs `*24`).
+    // Choix de la table : on source le 2024 (espèces/historiques dans `origins24`, type `race`/
+    // `background` ; classes/sorts/équipement dans `*24`). Mettre `false` pour revenir au 2014 DRS.
+    // On exclut les packs d'aptitudes de monstres : ils portent des items `weapon` (attaques
+    // naturelles) qui pollueraient la liste d'équipement.
+    const useRuleset2024 = true;
+    const itemPacks = Array.from(game.packs.values()).filter((p: any) => {
+      const id = p.metadata?.id || '';
+      if (p.metadata?.type !== 'Item') return false;
+      if (/monsterfeatures/i.test(id)) return false;
+      return useRuleset2024 ? /24$/.test(id) : !/24$/.test(id);
+    });
+    for (const pack of itemPacks) {
+      let index: any;
+      try {
+        index = await (pack as any).getIndex({
+          fields: [
+            'type',
+            'system.identifier',
+            'system.classIdentifier',
+            'system.level',
+            'system.hd',
+            'system.hd.denomination',
+            'system.hitDice',
+            'system.sourceClass',
+          ],
+        });
+      } catch (e) {
+        console.warn(`[${MODULE_ID}] Portal catalog: getIndex échoué pour ${pack.metadata?.id}`, e);
+        continue;
+      }
+      for (const e of index) {
+        const ref = { packId: pack.metadata.id, itemId: e._id, name: e.name };
+        switch (e.type) {
+          case 'race':
+            races.push(ref);
+            break;
+          case 'background':
+            backgrounds.push(ref);
+            break;
+          case 'class':
+            classes.push({
+              ...ref,
+              identifier: e.system?.identifier || slug(e.name),
+              hitDie: this.parseHitDie(e.system),
+            });
+            break;
+          case 'subclass': {
+            const cid = e.system?.classIdentifier || '';
+            (subclassesByClass[cid] ||= []).push(ref);
+            break;
+          }
+          case 'spell':
+            spells.push({ ...ref, level: e.system?.level ?? 0, sourceClass: e.system?.sourceClass || null });
+            break;
+          default:
+            if (EQUIP_TYPES.has(e.type)) equipment.push(ref);
+        }
+      }
+    }
+
+    // spellsByClass : à partir de system.sourceClass quand disponible (best-effort en 5.3.3).
+    const spellsByClass: Record<string, any[]> = {};
+    for (const s of spells) {
+      if (s.sourceClass) {
+        (spellsByClass[s.sourceClass] ||= []).push({
+          packId: s.packId,
+          itemId: s.itemId,
+          name: s.name,
+          level: s.level,
+        });
+      }
+    }
+
+    const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
+    races.sort(byName);
+    classes.sort(byName);
+    backgrounds.sort(byName);
+    equipment.sort(byName);
+    Object.values(subclassesByClass).forEach((a) => a.sort(byName));
+    Object.values(spellsByClass).forEach((a) => a.sort(byName));
+
+    return {
+      abilities: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+      alignments: [
+        'Loyal Bon',
+        'Neutre Bon',
+        'Chaotique Bon',
+        'Loyal Neutre',
+        'Neutre',
+        'Chaotique Neutre',
+        'Loyal Mauvais',
+        'Neutre Mauvais',
+        'Chaotique Mauvais',
+      ],
+      races,
+      classes,
+      subclassesByClass,
+      backgrounds,
+      spellsByClass,
+      spells: spells
+        .map((s) => ({ packId: s.packId, itemId: s.itemId, name: s.name, level: s.level }))
+        .sort(byName),
+      equipment,
+    };
+  }
+
+  /** Dé de vie d'une classe (5e) : tolère hd.denomination / hd.die / hitDice ; défaut d8. */
+  private parseHitDie(sys: any): number {
+    const fromStr = (v: any) => {
+      const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10);
+      return Number.isFinite(n) && n >= 4 && n <= 12 ? n : null;
+    };
+    if (sys?.hd) {
+      if (typeof sys.hd.denomination === 'number') return sys.hd.denomination;
+      const a = fromStr(sys.hd.denomination) ?? fromStr(sys.hd.die);
+      if (a) return a;
+    }
+    return fromStr(sys?.hitDice) ?? 8;
+  }
+
+  /** Lecture seule de la file d'actions (pour l'affichage du menu) : nombre + libellés. */
+  async portalListPendingActions(): Promise<{ success: boolean; count?: number; items?: any[]; error?: string }> {
+    try {
+      const res = await this.portalAdminFetch('/api/admin/actions?status=pending');
+      const pending: any[] = await res.json();
+      return {
+        success: true,
+        count: pending.length,
+        items: pending.map((a) => ({
+          id: a.id,
+          type: a.type,
+          name: a.payload?.characterName || a.type,
+          playerLabel: a.playerLabel,
+          createdAt: a.createdAt,
+        })),
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Tire la file d'actions en attente et exécute chacune selon son `type` (dispatch). Idempotent
+   * par ack (chaque action sort de la file). Point d'extension : ajouter un `case` pour un futur
+   * type d'action, sans toucher au reste de la chaîne (portail / poller).
+   */
+  async portalProcessPendingActions(): Promise<{ skipped?: boolean; count?: number; results?: any[] }> {
+    const { enabled, baseUrl } = this.portalConfig();
+    if (!enabled || !baseUrl) return { skipped: true };
+
+    const res = await this.portalAdminFetch('/api/admin/actions?status=pending');
+    const pending: any[] = await res.json();
+    const results: any[] = [];
+
+    for (const action of pending) {
+      try {
+        let result: any;
+        switch (action.type) {
+          case 'create-character': {
+            const built = await this.importCharacterAction(action);
+            result = { actorId: built.actorId, actorName: built.actorName };
+            ui.notifications?.info(`🧙 Personnage importé depuis le portail : ${built.actorName}`);
+            break;
+          }
+          default:
+            throw new Error(`Type d'action inconnu : ${action.type}`);
+        }
+        await this.portalAckAction(action.id, { status: 'done', result });
+        results.push({ id: action.id, type: action.type, ok: true, result });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[${MODULE_ID}] Action ${action.id} (${action.type}) échouée :`, error);
+        // Marque rejetée pour la sortir de la file (évite une boucle d'échec sur la même action).
+        await this.portalAckAction(action.id, { status: 'rejected', note: msg.slice(0, 400) }).catch(
+          () => {}
+        );
+        ui.notifications?.warn(`Portail : action refusée (${msg.slice(0, 80)})`);
+        results.push({ id: action.id, type: action.type, ok: false, error: msg });
+      }
+    }
+    return { count: pending.length, results };
+  }
+
+  /** Acquitte une action auprès du portail (terminée ou rejetée). */
+  private async portalAckAction(
+    actionId: string,
+    ack: { status: 'done' | 'rejected'; result?: any; note?: string }
+  ): Promise<void> {
+    await this.portalAdminFetch(`/api/admin/actions/${actionId}/ack`, {
+      method: 'POST',
+      body: JSON.stringify(ack),
+    });
+  }
+
+  /** Handler du type `create-character` : acteur dnd5e + portrait + liaison joueur. */
+  private async importCharacterAction(action: any): Promise<{ actorId: string; actorName: string }> {
+    const built = await this.buildCharacterActorFromSubmission(action.payload);
+
+    if (action.hasAttachment) {
+      try {
+        const imgPath = await this.portalDownloadAttachment(action.id);
+        await this.setActorImage({
+          actorIdentifier: built.actorId,
+          img: imgPath,
+          tokenSrc: imgPath,
+          applyPjDefaults: true,
+        });
+      } catch (e) {
+        console.warn(`[${MODULE_ID}] Portrait non appliqué pour ${built.actorName} :`, e);
+      }
+    }
+
+    if (action.foundryUser) {
+      try {
+        await this.assignDefaultCharacter({
+          userIdentifier: action.foundryUser,
+          actorIdentifier: built.actorId,
+          grantOwnership: true,
+        });
+      } catch (e) {
+        console.warn(`[${MODULE_ID}] Liaison joueur impossible (${action.foundryUser}) :`, e);
+      }
+    }
+
+    return built;
+  }
+
+  /** Récupère la pièce jointe binaire d'une action et la téléverse dans le monde Foundry. */
+  private async portalDownloadAttachment(actionId: string): Promise<string> {
+    const res = await this.portalAdminFetch(`/api/admin/actions/${actionId}/attachment`);
+    const blob = await res.blob();
+    const type = blob.type || 'image/png';
+    const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg';
+    const safeId = String(actionId).replace(/[^a-zA-Z0-9_-]/g, '');
+
+    const worldId = (game as any).world?.id || 'unknown-world';
+    const uploadPath = `worlds/${worldId}/portal-portraits`;
+    const FilePickerAPI =
+      (globalThis as any).foundry?.applications?.apps?.FilePicker?.implementation ||
+      (globalThis as any).FilePicker;
+    try {
+      await FilePickerAPI.createDirectory('data', uploadPath, { bucket: null });
+    } catch (e: any) {
+      if (!e?.message?.includes('EEXIST') && !e?.message?.includes('already exists')) {
+        console.warn(`[${MODULE_ID}] createDirectory portraits :`, e?.message);
+      }
+    }
+    const file = new File([blob], `${safeId}.${ext}`, { type });
+    const up = await FilePickerAPI.upload('data', uploadPath, file, {}, { notify: false });
+    return up.path;
+  }
+
+  /**
+   * Construit un acteur dnd5e `character` à partir d'une soumission validée.
+   * MVP (advancements NON exécutés) : items SRD embarqués en données brutes + scores/PV/bio
+   * écrits directement. Voir le plan pour le périmètre différé.
+   */
+  async buildCharacterActorFromSubmission(payload: any): Promise<{
+    actorId: string;
+    actorName: string;
+    hp: number;
+    itemsAdded: number;
+  }> {
+    if (!payload || !payload.characterName) throw new Error('Soumission sans nom de personnage.');
+
+    // Charge un item de compendium en données brutes (toObject), avec contrôle de type par emplacement.
+    const loadTyped = async (
+      ref: any,
+      allowed: string[] | null,
+      slotName: string
+    ): Promise<any | null> => {
+      if (!ref || !ref.packId || !ref.itemId) return null;
+      const pack = game.packs.get(ref.packId);
+      if (!pack) throw new Error(`${slotName} : pack introuvable (${ref.packId}).`);
+      const doc = await (pack as any).getDocument(ref.itemId);
+      if (!doc) throw new Error(`${slotName} : item introuvable (${ref.itemId}).`);
+      if (allowed && !allowed.includes((doc as any).type)) {
+        throw new Error(`${slotName} : type inattendu « ${(doc as any).type} ».`);
+      }
+      return doc.toObject();
+    };
+
+    const raceObj = await loadTyped(payload.race, ['race'], 'Race');
+    const classObj = await loadTyped(payload.class, ['class'], 'Classe');
+    const level = Math.max(1, Math.min(20, Number(payload.class?.level) || 1));
+    if (classObj?.system) classObj.system.levels = level;
+    const subclassObj = await loadTyped(payload.subclass, ['subclass'], 'Sous-classe');
+    const backgroundObj = await loadTyped(payload.background, ['background'], 'Historique');
+
+    const spellObjs: any[] = [];
+    for (const s of payload.spells || []) {
+      const o = await loadTyped(s, ['spell'], 'Sort');
+      if (o) spellObjs.push(o);
+    }
+    const equipObjs: any[] = [];
+    for (const eq of payload.equipment || []) {
+      const o = await loadTyped(eq, null, 'Équipement');
+      if (o) {
+        if (o.system && 'quantity' in o.system) o.system.quantity = Math.max(1, Number(eq.quantity) || 1);
+        equipObjs.push(o);
+      }
+    }
+
+    const ab = payload.abilities || {};
+    // hitDie vient du catalogue (calculé par parseHitDie à la publication) ; défaut d8.
+    const hitDie = Number(payload.class?.hitDie) || 8;
+    const hp = this.computeStartingHp(hitDie, level, Number(ab.con) || 10);
+
+    const abilities: any = {};
+    for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
+      abilities[k] = { value: Math.max(1, Math.min(30, Number(ab[k]) || 10)) };
+    }
+
+    const folderId = await this.getOrCreateFolder('Personnages — Portail', 'Actor');
+    const actorData: any = {
+      name: String(payload.characterName).slice(0, 80),
+      type: 'character',
+      folder: folderId || null,
+      system: {
+        abilities,
+        attributes: { hp: { value: hp, max: hp } },
+        details: {
+          biography: { value: this.sanitizeBiographyHtml(payload.biography) },
+          alignment: payload.alignment || '',
+        },
+      },
+    };
+
+    const actor = await Actor.create(actorData);
+    if (!actor) throw new Error("Création de l'acteur échouée.");
+
+    const items = [raceObj, classObj, subclassObj, backgroundObj, ...spellObjs, ...equipObjs].filter(
+      Boolean
+    );
+    if (items.length) {
+      await (actor as any).createEmbeddedDocuments('Item', items);
+    }
+
+    return { actorId: actor.id as string, actorName: actor.name as string, hp, itemsAdded: items.length };
+  }
+
+  /** PV de départ déterministes (pas de jet) : niv.1 = max(dé)+mod CON ; suivants = moyenne PHB. */
+  private computeStartingHp(hitDie: number, level: number, con: number): number {
+    const conMod = Math.floor((con - 10) / 2);
+    const avg = Math.floor(hitDie / 2) + 1;
+    let hp = hitDie + conMod;
+    for (let l = 2; l <= level; l++) hp += avg + conMod;
+    return Math.max(1, hp);
+  }
+
+  /** Échappe la biographie (anti-XSS stocké) et conserve les paragraphes/sauts de ligne. */
+  private sanitizeBiographyHtml(text: any): string {
+    const esc = String(text || '').replace(
+      /[&<>"']/g,
+      (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+    );
+    if (!esc.trim()) return '';
+    return esc
+      .split(/\n{2,}/)
+      .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+      .join('');
+  }
 }

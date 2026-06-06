@@ -19,6 +19,8 @@ class FoundryMCPBridge {
   private heartbeatInterval: number | null = null;
   private lastActivity: Date = new Date();
   private isConnecting = false;
+  private portalPollInterval: number | null = null;
+  private portalPolling = false;
 
   constructor() {
     this.settings = new ModuleSettings();
@@ -100,6 +102,10 @@ class FoundryMCPBridge {
       if (enabled) {
         await this.startComfyUIMonitoring();
       }
+
+      // Start character-portal polling (independent of the MCP bridge: it uses plain HTTPS
+      // fetch to the external portal, not the WebRTC link). Self-checks the portalEnabled flag.
+      this.startPortalPolling();
 
       console.log(`[${MODULE_ID}] Module ready`);
     } catch (error) {
@@ -345,6 +351,51 @@ class FoundryMCPBridge {
   }
 
   /**
+   * Start polling the character-creation portal for validated submissions and import them.
+   * GM-only (onReady already gates non-GM). Self-disables when the portal is off. Public so the
+   * settings menu can restart it after the config changes (via window.foundryMCPBridge).
+   */
+  startPortalPolling(): void {
+    this.stopPortalPolling();
+
+    if (!this.isGMUser()) return;
+    if (!this.settings.getSetting('portalEnabled')) {
+      console.log(`[${MODULE_ID}] Portal polling disabled`);
+      return;
+    }
+
+    const sec = Number(this.settings.getSetting('portalPollIntervalSec')) || 30;
+    const ms = Math.max(10, sec) * 1000;
+
+    this.portalPollInterval = window.setInterval(async () => {
+      // Skip if a previous poll is still importing (slow imports must not stack).
+      if (this.portalPolling) return;
+      this.portalPolling = true;
+      try {
+        const dataAccess = (this.queryHandlers as any)?.dataAccess;
+        if (dataAccess?.portalProcessPendingActions) {
+          await dataAccess.portalProcessPendingActions();
+        }
+      } catch (error) {
+        console.warn(`[${MODULE_ID}] Portal poll error:`, error);
+      } finally {
+        this.portalPolling = false;
+      }
+    }, ms);
+
+    console.log(`[${MODULE_ID}] Portal polling started (${ms}ms interval)`);
+  }
+
+  /** Stop the character-portal poller. */
+  stopPortalPolling(): void {
+    if (this.portalPollInterval) {
+      clearInterval(this.portalPollInterval);
+      this.portalPollInterval = null;
+      console.log(`[${MODULE_ID}] Portal polling stopped`);
+    }
+  }
+
+  /**
    * Perform heartbeat check
    */
   private async performHeartbeat(): Promise<void> {
@@ -488,6 +539,7 @@ class FoundryMCPBridge {
     console.log(`[${MODULE_ID}] Cleaning up...`);
 
     await this.stop();
+    this.stopPortalPolling();
     this.queryHandlers.unregisterHandlers();
     this.campaignHooks.unregister();
 

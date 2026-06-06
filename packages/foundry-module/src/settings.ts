@@ -187,6 +187,132 @@ export class ModuleSettings {
       restricted: true,
     });
 
+    // Character Portal submenu — questionnaire en ligne -> acteur dnd5e
+    (game.settings as any).registerMenu(this.moduleId, 'portalMenu', {
+      name: 'Portail de création de personnage',
+      label: 'Configurer le Portail',
+      hint: "Lien le module au portail web (service externe) où les joueurs créent leur personnage. Génère des liens à usage unique, publie le catalogue SRD, et importe les fiches dans le monde.",
+      icon: 'fas fa-scroll',
+      type: class extends FormApplication {
+        static get defaultOptions() {
+          return foundry.utils.mergeObject(super.defaultOptions, {
+            title: 'Portail de création de personnage',
+            template: `modules/${MODULE_ID}/templates/portal-menu.html`,
+            width: 560,
+            height: 'auto',
+            resizable: true,
+            closeOnSubmit: false,
+          } as any);
+        }
+
+        getData(): any {
+          const users = (game.users?.contents || [])
+            .filter((u: any) => !u.isGM)
+            .map((u: any) => ({ id: u.id, name: u.name }));
+          return {
+            portalEnabled: game.settings.get(MODULE_ID, 'portalEnabled'),
+            portalBaseUrl: game.settings.get(MODULE_ID, 'portalBaseUrl') || '',
+            portalAdminToken: game.settings.get(MODULE_ID, 'portalAdminToken') || '',
+            portalPollIntervalSec: game.settings.get(MODULE_ID, 'portalPollIntervalSec') || 30,
+            users,
+          };
+        }
+
+        private dataAccess(): any {
+          return (globalThis as any).foundryMCPBridge?.dataAccess;
+        }
+
+        activateListeners(html: JQuery) {
+          super.activateListeners(html);
+
+          // Sauvegarde rapide de la config avant toute action réseau.
+          const saveConfig = async () => {
+            await game.settings.set(MODULE_ID, 'portalEnabled', html.find('#portal-enabled').is(':checked'));
+            await game.settings.set(MODULE_ID, 'portalBaseUrl', String(html.find('#portal-url').val() || '').trim());
+            await game.settings.set(MODULE_ID, 'portalAdminToken', String(html.find('#portal-token').val() || '').trim());
+            const poll = parseInt(String(html.find('#portal-poll').val() || '30'), 10);
+            await game.settings.set(MODULE_ID, 'portalPollIntervalSec', Number.isFinite(poll) ? poll : 30);
+          };
+
+          html.find('#portal-generate').on('click', async () => {
+            await saveConfig();
+            const da = this.dataAccess();
+            if (!da?.portalIssueOtp) return;
+            const playerLabel = String(html.find('#portal-player-label').val() || '').trim();
+            const foundryUser = String(html.find('#portal-user').val() || '').trim();
+            const res = await da.portalIssueOtp({ playerLabel, foundryUser });
+            if (res.success) {
+              html.find('#portal-otp-url').val(res.url).trigger('select');
+              ui.notifications?.info('Lien généré. Copiez-le et envoyez-le au joueur.');
+            } else {
+              ui.notifications?.error(`Échec de génération du lien : ${res.error}`);
+            }
+          });
+
+          html.find('#portal-copy-url').on('click', () => {
+            const url = String(html.find('#portal-otp-url').val() || '');
+            if (url) {
+              (navigator as any).clipboard?.writeText(url);
+              ui.notifications?.info('Lien copié dans le presse-papier.');
+            }
+          });
+
+          html.find('#portal-publish').on('click', async () => {
+            await saveConfig();
+            const da = this.dataAccess();
+            if (!da?.portalPublishCatalog) return;
+            ui.notifications?.info('Publication du catalogue SRD…');
+            const res = await da.portalPublishCatalog();
+            if (res.success) {
+              const c = res.counts;
+              html.find('#portal-status').text(
+                `Catalogue publié : ${c.races} races, ${c.classes} classes, ${c.backgrounds} historiques, ${c.spells} sorts, ${c.equipment} objets.`
+              );
+              ui.notifications?.info('Catalogue SRD publié.');
+            } else {
+              ui.notifications?.error(`Échec de publication : ${res.error}`);
+            }
+          });
+
+          html.find('#portal-refresh').on('click', async () => {
+            await saveConfig();
+            const da = this.dataAccess();
+            if (!da?.portalListPendingActions) return;
+            const res = await da.portalListPendingActions();
+            if (res.success) {
+              const names = (res.items || []).map((i: any) => i.name || i.playerLabel || i.id).join(', ');
+              html.find('#portal-status').text(
+                res.count ? `${res.count} action(s) en attente : ${names}` : 'Aucune action en attente.'
+              );
+            } else {
+              ui.notifications?.error(`Portail injoignable : ${res.error}`);
+            }
+          });
+
+          html.find('#portal-import').on('click', async () => {
+            await saveConfig();
+            const da = this.dataAccess();
+            if (!da?.portalProcessPendingActions) return;
+            ui.notifications?.info('Traitement des actions en attente…');
+            const res = await da.portalProcessPendingActions();
+            const ok = (res.results || []).filter((r: any) => r.ok).length;
+            const ko = (res.results || []).filter((r: any) => !r.ok).length;
+            html.find('#portal-status').text(`Traitement terminé : ${ok} réussie(s), ${ko} échec(s).`);
+          });
+        }
+
+        async _updateObject(_event: Event, formData: any) {
+          await game.settings.set(MODULE_ID, 'portalEnabled', !!formData.portalEnabled);
+          await game.settings.set(MODULE_ID, 'portalBaseUrl', String(formData.portalBaseUrl || '').trim());
+          await game.settings.set(MODULE_ID, 'portalAdminToken', String(formData.portalAdminToken || '').trim());
+          const poll = parseInt(String(formData.portalPollIntervalSec || '30'), 10);
+          await game.settings.set(MODULE_ID, 'portalPollIntervalSec', Number.isFinite(poll) ? poll : 30);
+          ui.notifications?.info('Réglages du portail enregistrés.');
+        }
+      },
+      restricted: true,
+    });
+
     // ============================================================================
     // SECTION 1: BASIC SETTINGS
     // ============================================================================
@@ -307,6 +433,37 @@ export class ModuleSettings {
         high: 'High',
       },
       default: 'low',
+    });
+
+    // Character Portal settings (configured via submenu only)
+    game.settings.register(this.moduleId, 'portalEnabled', {
+      scope: 'world',
+      config: false,
+      type: Boolean,
+      default: false,
+      onChange: () => (window as any).foundryMCPBridge?.startPortalPolling?.(),
+    });
+
+    game.settings.register(this.moduleId, 'portalBaseUrl', {
+      scope: 'world',
+      config: false,
+      type: String,
+      default: '',
+    });
+
+    game.settings.register(this.moduleId, 'portalAdminToken', {
+      scope: 'world',
+      config: false,
+      type: String,
+      default: '',
+    });
+
+    game.settings.register(this.moduleId, 'portalPollIntervalSec', {
+      scope: 'world',
+      config: false,
+      type: Number,
+      default: 30,
+      onChange: () => (window as any).foundryMCPBridge?.startPortalPolling?.(),
     });
 
     // ============================================================================
