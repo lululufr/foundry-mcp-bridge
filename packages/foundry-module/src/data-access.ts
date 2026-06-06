@@ -8608,15 +8608,15 @@ export class FoundryDataAccess {
     for (const pack of itemPacks) {
       let index: any;
       try {
+        // NB : ne PAS demander à la fois `system.hd` et `system.hd.denomination` (champs qui se
+        // chevauchent) → Foundry plante (« Cannot create property 'denomination' on number »).
+        // Le dé de vie est calculé à l'import depuis le doc de classe complet, pas via l'index.
         index = await (pack as any).getIndex({
           fields: [
             'type',
             'system.identifier',
             'system.classIdentifier',
             'system.level',
-            'system.hd',
-            'system.hd.denomination',
-            'system.hitDice',
             'system.sourceClass',
           ],
         });
@@ -8634,11 +8634,8 @@ export class FoundryDataAccess {
             backgrounds.push(ref);
             break;
           case 'class':
-            classes.push({
-              ...ref,
-              identifier: e.system?.identifier || slug(e.name),
-              hitDie: this.parseHitDie(e.system),
-            });
+            // hitDie calculé à l'import (depuis le doc complet), pas ici (cf. index ci-dessus).
+            classes.push({ ...ref, identifier: e.system?.identifier || slug(e.name) });
             break;
           case 'subclass': {
             const cid = e.system?.classIdentifier || '';
@@ -8898,8 +8895,8 @@ export class FoundryDataAccess {
     }
 
     const ab = payload.abilities || {};
-    // hitDie vient du catalogue (calculé par parseHitDie à la publication) ; défaut d8.
-    const hitDie = Number(payload.class?.hitDie) || 8;
+    // hitDie lu sur le doc de classe complet (toObject), pas sur l'index ; défaut d8.
+    const hitDie = this.parseHitDie(classObj?.system || {}) || Number(payload.class?.hitDie) || 8;
     const hp = this.computeStartingHp(hitDie, level, Number(ab.con) || 10);
 
     const abilities: any = {};
