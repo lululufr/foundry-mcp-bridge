@@ -427,6 +427,46 @@ export class SceneTools {
           },
         },
       },
+      {
+        name: 'set-actor-image',
+        description:
+          "Set an actor's portrait (sheet image) and/or its prototype token artwork from local image files, and optionally apply player-character prototype defaults (linked token, vision enabled, friendly disposition, HP bar, name/bars on hover). Each provided image is uploaded to Foundry first (worlds/<id>/tokens), then assigned. Use to give real artwork to player characters (skill tokens-pj). Targets one actor by name or id.",
+        inputSchema: {
+          type: 'object',
+          properties: {
+            actorIdentifier: {
+              type: 'string',
+              description: 'Actor name or id to update.',
+            },
+            tokenImagePath: {
+              type: 'string',
+              description:
+                'Absolute path to a local image (PNG/JPG) for the prototype token artwork (top-down token).',
+            },
+            portraitImagePath: {
+              type: 'string',
+              description:
+                'Absolute path to a local image (PNG/JPG) for the actor portrait (sheet image). May be the same file as the token.',
+            },
+            applyPjDefaults: {
+              type: 'boolean',
+              description:
+                'Apply player-character prototype-token defaults: actorLink=true, vision enabled, disposition friendly, HP bar, name/bars on hover. Default true. Set false for non-PJ actors.',
+            },
+            dynamicRing: {
+              type: 'boolean',
+              description:
+                'Enable the v14 dynamic token ring (a clean colored frame + integrated resource bar) without altering the artwork. Default false.',
+            },
+            disposition: {
+              type: 'number',
+              enum: [-1, 0, 1],
+              description: 'Override token disposition: -1 hostile, 0 neutral, 1 friendly.',
+            },
+          },
+          required: ['actorIdentifier'],
+        },
+      },
     ];
   }
 
@@ -923,6 +963,92 @@ export class SceneTools {
       this.logger.error('Failed to place scene props', error);
       throw new Error(
         `Failed to place scene props: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Set an actor's portrait and/or prototype token artwork from local image files. Each image is
+   * uploaded to Foundry (worlds/<id>/tokens) first, then assigned to the actor along with optional
+   * player-character prototype-token defaults. Used by the tokens-pj skill.
+   */
+  async handleSetActorImage(args: any): Promise<any> {
+    const schema = z.object({
+      actorIdentifier: z.string(),
+      tokenImagePath: z.string().optional(),
+      portraitImagePath: z.string().optional(),
+      applyPjDefaults: z.boolean().optional(),
+      dynamicRing: z.boolean().optional(),
+      disposition: z.union([z.literal(-1), z.literal(0), z.literal(1)]).optional(),
+    });
+    const {
+      actorIdentifier,
+      tokenImagePath,
+      portraitImagePath,
+      applyPjDefaults,
+      dynamicRing,
+      disposition,
+    } = schema.parse(args);
+
+    if (!tokenImagePath && !portraitImagePath) {
+      throw new Error('Provide at least one of tokenImagePath or portraitImagePath.');
+    }
+
+    this.logger.info('Setting actor image', {
+      actorIdentifier,
+      hasToken: !!tokenImagePath,
+      hasPortrait: !!portraitImagePath,
+    });
+
+    // Upload a local image once (cached by absolute path) and return its Foundry web path.
+    const uploadedByPath = new Map<string, string>();
+    const uploadImage = async (absPath: string): Promise<string> => {
+      const cached = uploadedByPath.get(absPath);
+      if (cached) return cached;
+      let imageBuffer: Buffer;
+      try {
+        imageBuffer = await readFile(absPath);
+      } catch (error) {
+        throw new Error(
+          `Cannot read image "${absPath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+      const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
+        filename: basename(absPath),
+        imageData: imageBuffer.toString('base64'),
+        subdir: 'tokens',
+      });
+      if (!uploadResult?.success) {
+        throw new Error(
+          `Failed to upload image "${basename(absPath)}" to Foundry: ${uploadResult?.error || 'unknown error'}`
+        );
+      }
+      const webPath = uploadResult.path as string;
+      uploadedByPath.set(absPath, webPath);
+      this.logger.info('Token image uploaded to Foundry', { webPath });
+      return webPath;
+    };
+
+    const tokenSrc = tokenImagePath ? await uploadImage(tokenImagePath) : undefined;
+    const img = portraitImagePath ? await uploadImage(portraitImagePath) : undefined;
+
+    try {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.set-actor-image', {
+        actorIdentifier,
+        ...(img ? { img } : {}),
+        ...(tokenSrc ? { tokenSrc } : {}),
+        applyPjDefaults: applyPjDefaults ?? true,
+        ...(dynamicRing !== undefined ? { dynamicRing } : {}),
+        ...(disposition !== undefined ? { disposition } : {}),
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to set actor image', error);
+      throw new Error(
+        `Failed to set actor image: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

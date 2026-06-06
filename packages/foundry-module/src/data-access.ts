@@ -6139,6 +6139,103 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Set an actor's portrait (actor.img) and/or prototype token texture, and optionally apply
+   * sensible "player character" prototype-token defaults (linked, vision on, friendly, HP bar).
+   * Images must already be Foundry web paths (uploaded beforehand) — remote http URLs are not
+   * accepted for token textures in v14.
+   */
+  async setActorImage(data: {
+    actorIdentifier: string;
+    img?: string;
+    tokenSrc?: string;
+    applyPjDefaults?: boolean;
+    dynamicRing?: boolean;
+    disposition?: number;
+    displayName?: number;
+    displayBars?: number;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+    actorId?: string;
+    actorName?: string;
+    applied?: Record<string, unknown>;
+  }> {
+    this.validateFoundryState();
+
+    try {
+      const actor = this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        return { success: false, error: `Actor not found: ${data.actorIdentifier}`, message: '' };
+      }
+
+      const patch: any = {};
+      const applied: Record<string, unknown> = {};
+
+      if (data.img) {
+        patch.img = data.img;
+        applied.img = data.img;
+      }
+
+      const proto: any = {};
+      if (data.tokenSrc) {
+        proto.texture = { src: data.tokenSrc };
+        applied.tokenSrc = data.tokenSrc;
+      }
+
+      // TOKEN_DISPLAY_MODES.HOVER = 1 (name/bars shown on hover)
+      const HOVER = 1;
+      if (data.applyPjDefaults) {
+        proto.actorLink = true;
+        proto.sight = { enabled: true };
+        proto.disposition = data.disposition ?? 1; // 1 = friendly
+        proto.displayName = data.displayName ?? HOVER;
+        proto.displayBars = data.displayBars ?? HOVER;
+        proto.bar1 = { attribute: 'attributes.hp' };
+        applied.pjDefaults = true;
+      } else {
+        if (data.disposition !== undefined) proto.disposition = data.disposition;
+        if (data.displayName !== undefined) proto.displayName = data.displayName;
+        if (data.displayBars !== undefined) proto.displayBars = data.displayBars;
+      }
+
+      if (data.dynamicRing) {
+        proto.ring = { enabled: true };
+        applied.dynamicRing = true;
+      }
+
+      if (Object.keys(proto).length > 0) {
+        patch.prototypeToken = proto;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return {
+          success: false,
+          error: 'Nothing to update: provide img, tokenSrc, or prototype-token config',
+          message: '',
+        };
+      }
+
+      await actor.update(patch);
+
+      return {
+        success: true,
+        actorId: actor.id,
+        actorName: actor.name,
+        applied,
+        message: `Updated token/image for ${actor.name}`,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error setting actor image:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        message: '',
+      };
+    }
+  }
+
+  /**
    * Get actor ownership information
    */
   async getActorOwnership(data: {

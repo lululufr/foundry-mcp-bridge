@@ -1561,6 +1561,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'set-actor-image':
+                  result = await sceneTools.handleSetActorImage(args);
+
+                  break;
+
                 // Actor creation tools
 
                 case 'create-actor-from-compendium':

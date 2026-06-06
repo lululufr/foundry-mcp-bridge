@@ -93,6 +93,7 @@ export class QueryHandlers {
     // Phase 6: Actor ownership management
     CONFIG.queries[`${modulePrefix}.setActorOwnership`] = this.handleSetActorOwnership.bind(this);
     CONFIG.queries[`${modulePrefix}.getActorOwnership`] = this.handleGetActorOwnership.bind(this);
+    CONFIG.queries[`${modulePrefix}.set-actor-image`] = this.handleSetActorImage.bind(this);
     CONFIG.queries[`${modulePrefix}.getFriendlyNPCs`] = this.handleGetFriendlyNPCs.bind(this);
     CONFIG.queries[`${modulePrefix}.getPartyCharacters`] = this.handleGetPartyCharacters.bind(this);
     CONFIG.queries[`${modulePrefix}.getConnectedPlayers`] =
@@ -804,6 +805,32 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to set actor ownership: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle set actor image request: set portrait (actor.img) and/or prototype token texture,
+   * with optional player-character prototype defaults. Images must already be Foundry web paths.
+   */
+  async handleSetActorImage(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.actorIdentifier) {
+        throw new Error('actorIdentifier is required');
+      }
+
+      return await this.dataAccess.setActorImage(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to set actor image: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
