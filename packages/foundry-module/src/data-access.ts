@@ -1,6 +1,14 @@
 import { MODULE_ID, ERROR_MESSAGES, TOKEN_DISPOSITIONS } from './constants.js';
 import { permissionManager } from './permissions.js';
 import { transactionManager } from './transaction-manager.js';
+import {
+  classRule,
+  backgroundRule,
+  speciesRule,
+  POINT_BUY_COSTS,
+  POINT_BUY_BUDGET,
+  STANDARD_ARRAY,
+} from './portal-rules.js';
 // Local type definitions to avoid shared package import issues
 interface CharacterInfo {
   id: string;
@@ -8542,10 +8550,10 @@ export class FoundryDataAccess {
         body: JSON.stringify(catalog),
       });
       const counts = {
-        races: catalog.races.length,
+        species: catalog.species.length,
         classes: catalog.classes.length,
         subclasses: Object.values(catalog.subclassesByClass).reduce(
-          (n: number, a: any) => n + a.length,
+          (n: number, a: any) => n + (a as any[]).length,
           0
         ),
         backgrounds: catalog.backgrounds.length,
@@ -8562,18 +8570,8 @@ export class FoundryDataAccess {
    * Parcourt les packs d'Items et regroupe les entrées SRD par type. Agnostique des ids de
    * pack (ne code rien en dur) : marche tant que les compendiums dnd5e sont présents.
    */
-  async buildPortalCatalog(): Promise<{
-    abilities: string[];
-    alignments: string[];
-    races: any[];
-    classes: any[];
-    subclassesByClass: Record<string, any[]>;
-    backgrounds: any[];
-    spellsByClass: Record<string, any[]>;
-    spells: any[];
-    equipment: any[];
-  }> {
-    const races: any[] = [];
+  async buildPortalCatalog(): Promise<any> {
+    const species: any[] = [];
     const classes: any[] = [];
     const backgrounds: any[] = [];
     const equipment: any[] = [];
@@ -8593,6 +8591,15 @@ export class FoundryDataAccess {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '');
 
+    // Prix d'un item en pièces d'or (depuis system.price {value, denomination}).
+    const TO_GP: Record<string, number> = { pp: 10, gp: 1, ep: 0.5, sp: 0.1, cp: 0.01 };
+    const priceGp = (sys: any): number | null => {
+      const v = Number(sys?.price?.value);
+      if (!Number.isFinite(v) || v <= 0) return null;
+      const denom = sys?.price?.denomination || 'gp';
+      return Math.round(v * (TO_GP[denom] ?? 1) * 100) / 100;
+    };
+
     // Le monde peut contenir DEUX jeux de règles : 2014 « DRS » (SRD 5.1) et 2024 (packs `*24`).
     // Choix de la table : on source le 2024 (espèces/historiques dans `origins24`, type `race`/
     // `background` ; classes/sorts/équipement dans `*24`). Mettre `false` pour revenir au 2014 DRS.
@@ -8611,13 +8618,16 @@ export class FoundryDataAccess {
         // NB : ne PAS demander à la fois `system.hd` et `system.hd.denomination` (champs qui se
         // chevauchent) → Foundry plante (« Cannot create property 'denomination' on number »).
         // Le dé de vie est calculé à l'import depuis le doc de classe complet, pas via l'index.
+        // Champs FEUILLES uniquement (jamais un parent + son enfant → plantage getIndex).
         index = await (pack as any).getIndex({
           fields: [
             'type',
             'system.identifier',
             'system.classIdentifier',
             'system.level',
-            'system.sourceClass',
+            'system.school',
+            'system.price.value',
+            'system.price.denomination',
           ],
         });
       } catch (e) {
@@ -8627,72 +8637,60 @@ export class FoundryDataAccess {
       for (const e of index) {
         const ref = { packId: pack.metadata.id, itemId: e._id, name: e.name };
         switch (e.type) {
-          case 'race':
-            races.push(ref);
+          case 'race': {
+            const r = speciesRule(e.system?.identifier, e.name);
+            species.push({ ...ref, identifier: e.system?.identifier || slug(e.name), ...r });
             break;
-          case 'background':
-            backgrounds.push(ref);
+          }
+          case 'background': {
+            const b = backgroundRule(e.system?.identifier, e.name);
+            backgrounds.push({ ...ref, identifier: e.system?.identifier || slug(e.name), rule: b });
             break;
-          case 'class':
-            // hitDie calculé à l'import (depuis le doc complet), pas ici (cf. index ci-dessus).
-            classes.push({ ...ref, identifier: e.system?.identifier || slug(e.name) });
+          }
+          case 'class': {
+            const id = e.system?.identifier || slug(e.name);
+            const r = classRule(e.system?.identifier, e.name);
+            classes.push({ ...ref, identifier: id, rule: r });
             break;
+          }
           case 'subclass': {
             const cid = e.system?.classIdentifier || '';
             (subclassesByClass[cid] ||= []).push(ref);
             break;
           }
           case 'spell':
-            spells.push({ ...ref, level: e.system?.level ?? 0, sourceClass: e.system?.sourceClass || null });
+            spells.push({ ...ref, level: e.system?.level ?? 0, school: e.system?.school || '' });
             break;
           default:
-            if (EQUIP_TYPES.has(e.type)) equipment.push(ref);
+            if (EQUIP_TYPES.has(e.type)) {
+              const price = priceGp(e.system);
+              if (price !== null) equipment.push({ ...ref, type: e.type, price });
+            }
         }
       }
     }
 
-    // spellsByClass : à partir de system.sourceClass quand disponible (best-effort en 5.3.3).
-    const spellsByClass: Record<string, any[]> = {};
-    for (const s of spells) {
-      if (s.sourceClass) {
-        (spellsByClass[s.sourceClass] ||= []).push({
-          packId: s.packId,
-          itemId: s.itemId,
-          name: s.name,
-          level: s.level,
-        });
-      }
-    }
-
     const byName = (a: any, b: any) => String(a.name).localeCompare(String(b.name));
-    races.sort(byName);
+    species.sort(byName);
     classes.sort(byName);
     backgrounds.sort(byName);
-    equipment.sort(byName);
+    equipment.sort((a, b) => a.price - b.price || byName(a, b));
     Object.values(subclassesByClass).forEach((a) => a.sort(byName));
-    Object.values(spellsByClass).forEach((a) => a.sort(byName));
 
     return {
       abilities: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
       alignments: [
-        'Loyal Bon',
-        'Neutre Bon',
-        'Chaotique Bon',
-        'Loyal Neutre',
-        'Neutre',
-        'Chaotique Neutre',
-        'Loyal Mauvais',
-        'Neutre Mauvais',
-        'Chaotique Mauvais',
+        'Loyal Bon', 'Neutre Bon', 'Chaotique Bon',
+        'Loyal Neutre', 'Neutre', 'Chaotique Neutre',
+        'Loyal Mauvais', 'Neutre Mauvais', 'Chaotique Mauvais',
       ],
-      races,
+      pointBuy: { costs: POINT_BUY_COSTS, budget: POINT_BUY_BUDGET, standardArray: STANDARD_ARRAY },
+      species,
       classes,
       subclassesByClass,
       backgrounds,
-      spellsByClass,
-      spells: spells
-        .map((s) => ({ packId: s.packId, itemId: s.itemId, name: s.name, level: s.level }))
-        .sort(byName),
+      // Pas de filtre de liste par classe (données 2024 indisponibles) : tous les sorts, par niveau.
+      spells: spells.map((s) => ({ packId: s.packId, itemId: s.itemId, name: s.name, level: s.level, school: s.school })).sort(byName),
       equipment,
     };
   }
@@ -8873,7 +8871,7 @@ export class FoundryDataAccess {
       return doc.toObject();
     };
 
-    const raceObj = await loadTyped(payload.race, ['race'], 'Race');
+    const speciesObj = await loadTyped(payload.species || payload.race, ['race'], 'Espèce');
     const classObj = await loadTyped(payload.class, ['class'], 'Classe');
     const level = Math.max(1, Math.min(20, Number(payload.class?.level) || 1));
     if (classObj?.system) classObj.system.levels = level;
@@ -8899,9 +8897,20 @@ export class FoundryDataAccess {
     const hitDie = this.parseHitDie(classObj?.system || {}) || Number(payload.class?.hitDie) || 8;
     const hp = this.computeStartingHp(hitDie, level, Number(ab.con) || 10);
 
+    // Maîtrises de jets de sauvegarde : depuis le payload, sinon depuis la table de règles.
+    const cRule = classRule(payload.class?.identifier, payload.class?.name || '');
+    const saves: string[] = Array.isArray(payload.saves) && payload.saves.length ? payload.saves : cRule.saves || [];
+
     const abilities: any = {};
     for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
       abilities[k] = { value: Math.max(1, Math.min(30, Number(ab[k]) || 10)) };
+    }
+    for (const s of saves) if (abilities[s]) abilities[s].proficient = 1;
+
+    // Compétences maîtrisées (historique + choix de classe) fournies par le formulaire.
+    const skills: any = {};
+    for (const sk of payload.skills || []) {
+      if (typeof sk === 'string' && sk) skills[sk] = { value: 1 };
     }
 
     const folderId = await this.getOrCreateFolder('Personnages — Portail', 'Actor');
@@ -8911,6 +8920,7 @@ export class FoundryDataAccess {
       folder: folderId || null,
       system: {
         abilities,
+        ...(Object.keys(skills).length ? { skills } : {}),
         attributes: { hp: { value: hp, max: hp } },
         details: {
           biography: { value: this.sanitizeBiographyHtml(payload.biography) },
@@ -8922,7 +8932,7 @@ export class FoundryDataAccess {
     const actor = await Actor.create(actorData);
     if (!actor) throw new Error("Création de l'acteur échouée.");
 
-    const items = [raceObj, classObj, subclassObj, backgroundObj, ...spellObjs, ...equipObjs].filter(
+    const items = [speciesObj, classObj, subclassObj, backgroundObj, ...spellObjs, ...equipObjs].filter(
       Boolean
     );
     if (items.length) {

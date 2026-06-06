@@ -266,7 +266,7 @@ export class ModuleSettings {
             if (res.success) {
               const c = res.counts;
               html.find('#portal-status').text(
-                `Catalogue publié : ${c.races} races, ${c.classes} classes, ${c.backgrounds} historiques, ${c.spells} sorts, ${c.equipment} objets.`
+                `Catalogue publié : ${c.species} espèces, ${c.classes} classes, ${c.backgrounds} historiques, ${c.spells} sorts, ${c.equipment} objets.`
               );
               ui.notifications?.info('Catalogue SRD publié.');
             } else {
