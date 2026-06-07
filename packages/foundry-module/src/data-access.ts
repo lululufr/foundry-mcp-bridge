@@ -8581,43 +8581,44 @@ export class FoundryDataAccess {
     // --- Curation de l'équipement de départ ---------------------------------
     // On ne propose au joueur que : armes de base, armures, et objets utilitaires.
     // (le reste — babioles, marchandises, consommables exotiques — est écarté).
-    const SIMPLE_WEAPON = new Set(['simpleM', 'simpleR']);          // armes simples
-    const MARTIAL_OK = new Set([                                    // quelques martiales icôniques
-      'longsword', 'shortsword', 'rapier', 'scimitar', 'battleaxe', 'greataxe', 'greatsword',
-      'warhammer', 'maul', 'halberd', 'glaive', 'morningstar', 'flail', 'longbow', 'trident',
-      'pike', 'lance', 'whip', 'warpick',
+    // Public DÉBUTANT : liste volontairement TRÈS courte. Quelques armes de base, quelques
+    // armures, quelques objets utiles — pas plus. Filtrage par `baseItem` (id stable, insensible
+    // à la langue) avec repli sur le nom (FR/EN) si le baseItem manque.
+    const WEAPONS_OK = new Set([
+      'dagger', 'mace', 'quarterstaff', 'handaxe', 'shortsword', 'longsword', 'battleaxe', 'shortbow', 'longbow',
     ]);
+    const ARMOR_OK = new Set(['leather', 'hide', 'chainshirt', 'scalemail', 'chainmail', 'shield']);
     const ARMOR_TYPES = new Set(['light', 'medium', 'heavy', 'shield']);
     const UTILITY_KEYWORDS = [
-      'torch', 'torche', 'rope', 'corde', 'fishing', 'tackle', 'peche', 'bedroll', 'couchage',
-      'ration', 'waterskin', 'gourde', 'outre', 'tinderbox', 'briquet', 'amadou', 'lantern',
-      'lanterne', 'crowbar', 'piedebiche', 'pied-de-biche', 'hammer', 'marteau', 'piton', 'grappl',
-      'grappin', 'healer', 'trousse', 'soin', 'shovel', 'pelle', 'pole', 'perche', 'oil', 'huile',
-      'candle', 'bougie', 'chandelle', 'backpack', 'sacados', 'sac a dos', 'manacle', 'menotte',
-      'chain', 'chaine', 'bell', 'cloche', 'chalk', 'craie', 'whistle', 'sifflet', 'magnify',
-      'loupe', 'spyglass', 'longuevue', 'longue-vue', 'hourglass', 'sablier', 'climb', 'escalade',
-      'tent', 'tente', 'blanket', 'couverture', 'flask', 'fiole', 'flasque', 'pouch', 'besace',
-      'vial', 'book', 'livre', 'ink', 'encre', 'quill', 'plume', 'parchment', 'parchemin',
-      'signet', 'sceau', 'soap', 'savon', 'mirror', 'miroir', 'net', 'filet', 'pitons', 'kit',
+      'torch', 'torche', 'rope', 'corde', 'ration', 'waterskin', 'gourde', 'outre', 'bedroll',
+      'couchage', 'tinderbox', 'briquet', 'amadou', 'healer', 'trousse', 'soin', 'fishing',
+      'peche', 'tackle', 'lantern', 'lanterne',
     ];
+    const WEAPON_NAMES = [
+      'dague', 'dagger', 'masse', 'mace', 'baton', 'quarterstaff', 'epee courte', 'shortsword',
+      'epee longue', 'longsword', 'hache', 'handaxe', 'battleaxe', 'arc court', 'shortbow',
+      'arc long', 'longbow',
+    ];
+    const ARMOR_NAMES = ['cuir', 'leather', 'mailles', 'chainmail', 'chainshirt', 'bouclier', 'shield', 'ecailles', 'scale', 'peau', 'hide'];
     const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     // Catégorie « slot » d'un item d'équipement, ou null si on l'écarte de la liste.
     const equipSlot = (e: any): 'weapon' | 'armor' | 'utility' | null => {
       const tv = e.system?.type?.value;
       const base = norm(e.system?.type?.baseItem || '');
       const nm = norm(e.name);
-      const isUtility = () => UTILITY_KEYWORDS.some((k) => nm.includes(k));
       if (e.type === 'weapon') {
-        if (SIMPLE_WEAPON.has(tv)) return 'weapon';
-        if (MARTIAL_OK.has(base) || [...MARTIAL_OK].some((k) => nm.includes(k))) return 'weapon';
-        return null;
+        if (base) return WEAPONS_OK.has(base) ? 'weapon' : null;
+        return WEAPON_NAMES.some((k) => nm.includes(k)) ? 'weapon' : null;
       }
       if (e.type === 'equipment') {
-        if (ARMOR_TYPES.has(tv)) return 'armor';
-        return isUtility() ? 'utility' : null;
+        if (ARMOR_TYPES.has(tv)) {
+          if (base) return ARMOR_OK.has(base) ? 'armor' : null;
+          return ARMOR_NAMES.some((k) => nm.includes(k)) ? 'armor' : null;
+        }
+        return UTILITY_KEYWORDS.some((k) => nm.includes(k)) ? 'utility' : null;
       }
       if (e.type === 'tool' || e.type === 'consumable' || e.type === 'loot' || e.type === 'container') {
-        return isUtility() ? 'utility' : null;
+        return UTILITY_KEYWORDS.some((k) => nm.includes(k)) ? 'utility' : null;
       }
       return null;
     };
