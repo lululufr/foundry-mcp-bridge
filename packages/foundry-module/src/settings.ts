@@ -240,6 +240,11 @@ export class ModuleSettings {
             if (!da?.portalIssueOtp) return;
             const playerLabel = String(html.find('#portal-player-label').val() || '').trim();
             const foundryUser = String(html.find('#portal-user').val() || '').trim();
+            // Le joueur est obligatoire : c'est lui qui deviendra propriétaire du personnage créé.
+            if (!foundryUser) {
+              ui.notifications?.warn('Choisissez le joueur destinataire : le personnage créé lui sera attribué (propriétaire).');
+              return;
+            }
             const res = await da.portalIssueOtp({ playerLabel, foundryUser });
             if (res.success) {
               html.find('#portal-otp-url').val(res.url).trigger('select');

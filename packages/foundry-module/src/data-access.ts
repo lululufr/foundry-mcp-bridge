@@ -8578,14 +8578,49 @@ export class FoundryDataAccess {
     const subclassesByClass: Record<string, any[]> = {};
     const spells: any[] = [];
 
-    const EQUIP_TYPES = new Set([
-      'weapon',
-      'equipment',
-      'consumable',
-      'tool',
-      'loot',
-      'container',
+    // --- Curation de l'équipement de départ ---------------------------------
+    // On ne propose au joueur que : armes de base, armures, et objets utilitaires.
+    // (le reste — babioles, marchandises, consommables exotiques — est écarté).
+    const SIMPLE_WEAPON = new Set(['simpleM', 'simpleR']);          // armes simples
+    const MARTIAL_OK = new Set([                                    // quelques martiales icôniques
+      'longsword', 'shortsword', 'rapier', 'scimitar', 'battleaxe', 'greataxe', 'greatsword',
+      'warhammer', 'maul', 'halberd', 'glaive', 'morningstar', 'flail', 'longbow', 'trident',
+      'pike', 'lance', 'whip', 'warpick',
     ]);
+    const ARMOR_TYPES = new Set(['light', 'medium', 'heavy', 'shield']);
+    const UTILITY_KEYWORDS = [
+      'torch', 'torche', 'rope', 'corde', 'fishing', 'tackle', 'peche', 'bedroll', 'couchage',
+      'ration', 'waterskin', 'gourde', 'outre', 'tinderbox', 'briquet', 'amadou', 'lantern',
+      'lanterne', 'crowbar', 'piedebiche', 'pied-de-biche', 'hammer', 'marteau', 'piton', 'grappl',
+      'grappin', 'healer', 'trousse', 'soin', 'shovel', 'pelle', 'pole', 'perche', 'oil', 'huile',
+      'candle', 'bougie', 'chandelle', 'backpack', 'sacados', 'sac a dos', 'manacle', 'menotte',
+      'chain', 'chaine', 'bell', 'cloche', 'chalk', 'craie', 'whistle', 'sifflet', 'magnify',
+      'loupe', 'spyglass', 'longuevue', 'longue-vue', 'hourglass', 'sablier', 'climb', 'escalade',
+      'tent', 'tente', 'blanket', 'couverture', 'flask', 'fiole', 'flasque', 'pouch', 'besace',
+      'vial', 'book', 'livre', 'ink', 'encre', 'quill', 'plume', 'parchment', 'parchemin',
+      'signet', 'sceau', 'soap', 'savon', 'mirror', 'miroir', 'net', 'filet', 'pitons', 'kit',
+    ];
+    const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    // Catégorie « slot » d'un item d'équipement, ou null si on l'écarte de la liste.
+    const equipSlot = (e: any): 'weapon' | 'armor' | 'utility' | null => {
+      const tv = e.system?.type?.value;
+      const base = norm(e.system?.type?.baseItem || '');
+      const nm = norm(e.name);
+      const isUtility = () => UTILITY_KEYWORDS.some((k) => nm.includes(k));
+      if (e.type === 'weapon') {
+        if (SIMPLE_WEAPON.has(tv)) return 'weapon';
+        if (MARTIAL_OK.has(base) || [...MARTIAL_OK].some((k) => nm.includes(k))) return 'weapon';
+        return null;
+      }
+      if (e.type === 'equipment') {
+        if (ARMOR_TYPES.has(tv)) return 'armor';
+        return isUtility() ? 'utility' : null;
+      }
+      if (e.type === 'tool' || e.type === 'consumable' || e.type === 'loot' || e.type === 'container') {
+        return isUtility() ? 'utility' : null;
+      }
+      return null;
+    };
     const slug = (s: string) =>
       String(s || '')
         .toLowerCase()
@@ -8628,6 +8663,8 @@ export class FoundryDataAccess {
             'system.school',
             'system.price.value',
             'system.price.denomination',
+            'system.type.value',
+            'system.type.baseItem',
           ],
         });
       } catch (e) {
@@ -8661,11 +8698,13 @@ export class FoundryDataAccess {
           case 'spell':
             spells.push({ ...ref, level: e.system?.level ?? 0, school: e.system?.school || '' });
             break;
-          default:
-            if (EQUIP_TYPES.has(e.type)) {
-              const price = priceGp(e.system);
-              if (price !== null) equipment.push({ ...ref, type: e.type, price });
+          default: {
+            const slot = equipSlot(e);
+            if (slot) {
+              const price = priceGp(e.system) ?? 0; // l'or n'est plus contraignant : prix indicatif
+              equipment.push({ ...ref, type: e.type, slot, price });
             }
+          }
         }
       }
     }
@@ -8674,7 +8713,8 @@ export class FoundryDataAccess {
     species.sort(byName);
     classes.sort(byName);
     backgrounds.sort(byName);
-    equipment.sort((a, b) => a.price - b.price || byName(a, b));
+    const slotOrder: Record<string, number> = { weapon: 0, armor: 1, utility: 2 };
+    equipment.sort((a, b) => (slotOrder[a.slot] ?? 9) - (slotOrder[b.slot] ?? 9) || byName(a, b));
     Object.values(subclassesByClass).forEach((a) => a.sort(byName));
 
     return {
