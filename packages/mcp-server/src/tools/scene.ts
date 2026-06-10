@@ -467,6 +467,30 @@ export class SceneTools {
           required: ['actorIdentifier'],
         },
       },
+      {
+        name: 'set-scene-background',
+        description:
+          'Set or REPAIR the background image of an EXISTING scene (by name or id) from a local image file, WITHOUT recreating the scene — preserves notes, tokens, walls, lighting, links and id. Uploads the image, then sets the scene-root background and, for v14 Scene Levels scenes, the target level background so the map renders again. Use to fix scenes whose image upload failed at import (empty/broken background).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sceneName: {
+              type: 'string',
+              description: 'Target scene name or id (id is more reliable for accented names).',
+            },
+            imagePath: {
+              type: 'string',
+              description: 'Absolute path to the local image file (PNG/JPG/WebP) to use as background.',
+            },
+            levelIndex: {
+              type: 'number',
+              description:
+                'For v14 multi-level scenes, which level (0-based, default 0 = base/ground floor) to set the background on.',
+            },
+          },
+          required: ['sceneName', 'imagePath'],
+        },
+      },
     ];
   }
 
@@ -521,6 +545,54 @@ export class SceneTools {
       this.logger.error('Failed to set scene ambiance', error);
       throw new Error(
         `Failed to set scene ambiance: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleSetSceneBackground(args: any): Promise<any> {
+    const schema = z.object({
+      sceneName: z.string(),
+      imagePath: z.string(),
+      levelIndex: z.number().int().min(0).optional(),
+    });
+    const { sceneName, imagePath, levelIndex } = schema.parse(args);
+
+    this.logger.info('Setting scene background', { sceneName, imagePath, levelIndex });
+
+    let imageBuffer: Buffer;
+    try {
+      imageBuffer = await readFile(imagePath);
+    } catch (error) {
+      throw new Error(
+        `Cannot read image file "${imagePath}": ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+
+    const filename = basename(imagePath);
+    const uploadResult = await this.foundryClient.query('jdr-mcp-bridge.upload-generated-map', {
+      filename,
+      imageData: imageBuffer.toString('base64'),
+    });
+    if (!uploadResult?.success) {
+      throw new Error(
+        `Failed to upload background image "${filename}": ${uploadResult?.error || 'unknown error'}`
+      );
+    }
+
+    try {
+      const result = await this.foundryClient.query('jdr-mcp-bridge.set-scene-background', {
+        sceneIdentifier: sceneName,
+        src: uploadResult.path,
+        levelIndex,
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to set scene background', error);
+      throw new Error(
+        `Failed to set scene background: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

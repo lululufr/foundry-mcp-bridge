@@ -7891,6 +7891,75 @@ export class FoundryDataAccess {
    * `environment.darknessLevel` + `environment.globalLight.enabled`; `weather` is a core effect id
    * (e.g. rain, snow, fog, leaves, blizzard, rainStorm — '' clears it). Defaults to the active scene.
    */
+  /**
+   * Set (or REPAIR) the background image on an EXISTING scene, without recreating it.
+   * In the v14 Scene Levels model the rendered background lives on a Level (levels[].background.src);
+   * scenes built by createSceneLevels keep the scene-root background empty. This sets BOTH the
+   * scene-root background and the target Level's background so the map renders again. Used to repair
+   * scenes whose image upload failed at import (preserves notes, tokens, walls, links and id). The
+   * `src` is an already-uploaded Foundry path (the MCP-server uploads the file first).
+   */
+  async setSceneBackground(data: {
+    sceneIdentifier?: string;
+    src: string;
+    levelIndex?: number;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
+      targetIds: [data.sceneIdentifier ?? 'active'],
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+
+    if (!data.src || typeof data.src !== 'string') {
+      throw new Error('setSceneBackground requires a "src" (uploaded image path)');
+    }
+
+    // Resolve target scene: explicit identifier (id or name) or the active scene.
+    const scenes = (game.scenes as any)?.contents || [];
+    const scene = data.sceneIdentifier
+      ? scenes.find(
+          (s: any) =>
+            s.id === data.sceneIdentifier ||
+            s.name?.toLowerCase() === data.sceneIdentifier!.toLowerCase()
+        )
+      : (game.scenes as any).current;
+    if (!scene) {
+      throw new Error(
+        data.sceneIdentifier ? `Scene "${data.sceneIdentifier}" not found` : 'No active scene found'
+      );
+    }
+
+    const update: any = { 'background.src': data.src };
+
+    // v14 Scene Levels: the visible background lives on a Level. If the scene has levels, set the
+    // target level's background too. Clone every level (preserving _id so wall/level bindings hold).
+    const srcLevels = scene._source?.levels;
+    let levelTouched = -1;
+    let levelCount = 0;
+    if (Array.isArray(srcLevels) && srcLevels.length > 0) {
+      const levels = JSON.parse(JSON.stringify(srcLevels));
+      levelCount = levels.length;
+      const idx = Math.min(Math.max(0, Number(data.levelIndex ?? 0)), levels.length - 1);
+      levels[idx].background = { ...(levels[idx].background || {}), src: data.src };
+      update.levels = levels;
+      levelTouched = idx;
+    }
+
+    await scene.update(update);
+
+    return {
+      success: true,
+      sceneId: scene.id,
+      sceneName: scene.name,
+      src: data.src,
+      levelIndex: levelTouched,
+      levelCount,
+    };
+  }
+
   async setSceneAmbiance(data: {
     sceneIdentifier?: string;
     darkness?: number;

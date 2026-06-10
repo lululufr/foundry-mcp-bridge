@@ -1561,6 +1561,11 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'set-scene-background':
+                  result = await sceneTools.handleSetSceneBackground(args);
+
+                  break;
+
                 case 'set-actor-image':
                   result = await sceneTools.handleSetActorImage(args);
 

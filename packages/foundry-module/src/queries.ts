@@ -54,6 +54,8 @@ export class QueryHandlers {
       this.handleCreateSceneLevels.bind(this);
     CONFIG.queries[`${modulePrefix}.set-scene-ambiance`] =
       this.handleSetSceneAmbiance.bind(this);
+    CONFIG.queries[`${modulePrefix}.set-scene-background`] =
+      this.handleSetSceneBackground.bind(this);
     CONFIG.queries[`${modulePrefix}.sync-codex`] = this.handleSyncCodex.bind(this);
 
     // World queries
@@ -1241,6 +1243,32 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to set scene ambiance: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle setting/repairing a scene's background image on an existing scene (without recreating
+   * it). Uploads happen on the MCP-server side; this only assigns the already-uploaded path.
+   */
+  private async handleSetSceneBackground(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data?.src || typeof data.src !== 'string') {
+        throw new Error('Provide a "src" (uploaded image path)');
+      }
+
+      return await this.dataAccess.setSceneBackground(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to set scene background: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
